@@ -20,17 +20,22 @@ import { RegimentoModule } from './regimento/regimento.module';
     ThrottlerModule.forRoot([{ ttl: 60000, limit: 60 }]),
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
-      useFactory: (config: ConfigService) => ({
-        type: 'postgres',
-        host: config.get('DB_HOST', 'localhost'),
-        port: config.get<number>('DB_PORT', 5432),
-        database: config.get('DB_NAME', 'eplenarius'),
-        username: config.get('DB_USER', 'eplenarius'),
-        password: config.get('DB_PASSWORD', 'eplenarius_secret'),
-        entities: [__dirname + '/**/*.entity{.ts,.js}'],
-        synchronize: config.get('NODE_ENV') !== 'production',
-        logging: config.get('NODE_ENV') === 'development',
-      }),
+      useFactory: (config: ConfigService) => {
+        const url = config.get('DATABASE_URL');
+        return {
+          type: 'postgres',
+          url,
+          host: url ? undefined : config.get('DB_HOST', 'localhost'),
+          port: url ? undefined : config.get<number>('DB_PORT', 5432),
+          database: url ? undefined : config.get('DB_NAME', 'eplenarius'),
+          username: url ? undefined : config.get('DB_USER', 'eplenarius'),
+          password: url ? undefined : config.get('DB_PASSWORD', 'eplenarius_secret'),
+          entities: [__dirname + '/**/*.entity{.ts,.js}'],
+          synchronize: config.get('NODE_ENV') !== 'production',
+          logging: config.get('NODE_ENV') === 'development',
+          ssl: config.get('NODE_ENV') === 'production' ? { rejectUnauthorized: false } : false,
+        };
+      },
       inject: [ConfigService],
     }),
     AuthModule,
