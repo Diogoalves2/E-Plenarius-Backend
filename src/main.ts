@@ -23,8 +23,12 @@ async function bootstrap() {
     }),
   );
 
+  const allowedOrigins = process.env.FRONTEND_URL
+    ? process.env.FRONTEND_URL.split(',').map(o => o.trim())
+    : true;
+
   app.enableCors({
-    origin: true, // aceita qualquer origem em dev; restrinja em produção
+    origin: allowedOrigins,
     credentials: true,
   });
 
