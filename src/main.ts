@@ -1,10 +1,39 @@
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe, Logger, ExceptionFilter, ArgumentsHost, Catch, HttpException, HttpStatus } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { join } from 'path';
 import { mkdirSync } from 'fs';
 import { AppModule } from './app.module';
+
+@Catch()
+class GlobalExceptionFilter implements ExceptionFilter {
+  private readonly logger = new Logger('GlobalException');
+
+  catch(exception: unknown, host: ArgumentsHost) {
+    const ctx = host.switchToHttp();
+    const res = ctx.getResponse<any>();
+    const req = ctx.getRequest<any>();
+
+    const status = exception instanceof HttpException
+      ? exception.getStatus()
+      : HttpStatus.INTERNAL_SERVER_ERROR;
+
+    const message = exception instanceof HttpException
+      ? exception.getResponse()
+      : { statusCode: 500, message: 'Internal server error' };
+
+    if (status >= 500) {
+      const err = exception as any;
+      this.logger.error(
+        `[${req.method}] ${req.url} -> ${status} | ${err?.message ?? exception}`,
+        err?.stack ?? String(exception),
+      );
+    }
+
+    res.status(status).json(message);
+  }
+}
 
 async function bootstrap() {
   const uploadsDir = process.env.UPLOADS_DIR || join(process.cwd(), 'uploads');
@@ -12,6 +41,7 @@ async function bootstrap() {
 
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   app.useStaticAssets(uploadsDir, { prefix: '/uploads' });
+  app.useGlobalFilters(new GlobalExceptionFilter());
 
   app.setGlobalPrefix('api');
 

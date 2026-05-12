@@ -2,6 +2,7 @@ import {
   Injectable,
   UnauthorizedException,
   ForbiddenException,
+  Logger,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -15,6 +16,8 @@ import { JwtPayload } from './strategies/jwt.strategy';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly usersService: UsersService,
     private readonly jwtService: JwtService,
@@ -24,17 +27,46 @@ export class AuthService {
   ) {}
 
   async login(dto: LoginDto) {
-    const user = await this.usersService.findByIdentifierWithPassword(dto.identifier);
-    if (!user) throw new UnauthorizedException('Credenciais inválidas');
+    this.logger.log(`[login] tentativa identifier=${dto.identifier}`);
+    let user;
+    try {
+      user = await this.usersService.findByIdentifierWithPassword(dto.identifier);
+    } catch (err: any) {
+      this.logger.error(`[login] erro findByIdentifier: ${err?.message}`, err?.stack);
+      throw err;
+    }
+    if (!user) {
+      this.logger.warn(`[login] user not found: ${dto.identifier}`);
+      throw new UnauthorizedException('Credenciais inválidas');
+    }
 
-    const valid = await user.validatePassword(dto.password);
-    if (!valid) throw new UnauthorizedException('Credenciais inválidas');
+    let valid: boolean;
+    try {
+      valid = await user.validatePassword(dto.password);
+    } catch (err: any) {
+      this.logger.error(`[login] erro validatePassword: ${err?.message}`, err?.stack);
+      throw err;
+    }
+    if (!valid) {
+      this.logger.warn(`[login] senha invalida user=${user.id}`);
+      throw new UnauthorizedException('Credenciais inválidas');
+    }
 
     if (!user.isActive) throw new ForbiddenException('Conta desativada');
 
-    await this.usersService.update(user.id, { lastLoginAt: new Date() });
+    try {
+      await this.usersService.update(user.id, { lastLoginAt: new Date() });
+    } catch (err: any) {
+      this.logger.error(`[login] erro updateLastLogin user=${user.id}: ${err?.message}`, err?.stack);
+      throw err;
+    }
 
-    return this.generateTokens(user);
+    try {
+      return await this.generateTokens(user);
+    } catch (err: any) {
+      this.logger.error(`[login] erro generateTokens user=${user.id}: ${err?.message}`, err?.stack);
+      throw err;
+    }
   }
 
   async refresh(dto: RefreshTokenDto) {
