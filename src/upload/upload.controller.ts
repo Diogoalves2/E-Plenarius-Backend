@@ -1,6 +1,7 @@
 import {
   Controller,
   Post,
+  Get,
   UseGuards,
   UseInterceptors,
   UploadedFile,
@@ -11,9 +12,12 @@ import { ApiTags, ApiOperation, ApiBearerAuth, ApiConsumes, ApiBody } from '@nes
 import { diskStorage } from 'multer';
 import { extname, join } from 'path';
 import { randomBytes } from 'crypto';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
+
+const SYSTEM_LOGO_FILE = join(process.cwd(), 'uploads', 'system_logo.txt');
 
 const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml'];
 const MAX_LOGO_BYTES   =  2 * 1024 * 1024; //  2 MB
@@ -76,7 +80,17 @@ export class UploadController {
   )
   uploadLogo(@UploadedFile() file: Express.Multer.File) {
     if (!file) throw new BadRequestException('Nenhum arquivo enviado');
-    return { url: `/uploads/${file.filename}` };
+    const url = `/uploads/${file.filename}`;
+    writeFileSync(SYSTEM_LOGO_FILE, url, 'utf8');
+    return { url };
+  }
+
+  @Get('system-logo')
+  @ApiOperation({ summary: 'Retorna a URL do logo atual do sistema (público)' })
+  getSystemLogo() {
+    if (!existsSync(SYSTEM_LOGO_FILE)) return { url: null };
+    const url = readFileSync(SYSTEM_LOGO_FILE, 'utf8').trim();
+    return { url: url || null };
   }
 
   @Post('pdf')
