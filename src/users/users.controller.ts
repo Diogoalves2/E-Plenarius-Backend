@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Body, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Body, Param, UseGuards, BadRequestException } from '@nestjs/common';
 
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { UsersService } from './users.service';
@@ -72,6 +72,21 @@ export class UsersController {
     @Body() body: { newPassword: string },
   ) {
     return this.usersService.adminResetPassword(id, body.newPassword);
+  }
+
+  @Patch(':id/pin')
+  @UseGuards(RolesGuard)
+  @Roles('presidente', 'superadmin')
+  @ApiOperation({ summary: 'Definir/alterar PIN do app mobile (4 dígitos) de um vereador' })
+  async setPin(
+    @Param('id') id: string,
+    @Body() body: { pin: string | null },
+  ) {
+    if (body.pin !== null && !/^\d{4}$/.test(body.pin)) {
+      throw new BadRequestException('PIN deve ter exatamente 4 dígitos numéricos');
+    }
+    await this.usersService.setPin(id, body.pin);
+    return { ok: true, hasPin: body.pin !== null };
   }
 
   @Get(':id')

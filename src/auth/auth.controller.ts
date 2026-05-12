@@ -1,7 +1,7 @@
 import { Controller, Post, Body, UseGuards, HttpCode, HttpStatus } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
-import { LoginDto, RefreshTokenDto } from './dto/login.dto';
+import { LoginDto, RefreshTokenDto, MobileLoginDto } from './dto/login.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 
@@ -15,6 +15,13 @@ export class AuthController {
   @ApiOperation({ summary: 'Login com e-mail e senha' })
   login(@Body() dto: LoginDto) {
     return this.authService.login(dto);
+  }
+
+  @Post('mobile-login')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Login do app mobile: userId + PIN de 4 dígitos' })
+  mobileLogin(@Body() dto: MobileLoginDto) {
+    return this.authService.mobileLogin(dto);
   }
 
   @Post('refresh')

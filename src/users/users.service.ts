@@ -73,6 +73,25 @@ export class UsersService {
       .getOne();
   }
 
+  async findByIdWithPin(id: string): Promise<User | null> {
+    return this.usersRepo
+      .createQueryBuilder('user')
+      .addSelect('user.pinHash')
+      .where('user.id = :id', { id })
+      .getOne();
+  }
+
+  async setPin(userId: string, pin: string | null): Promise<void> {
+    const user = await this.usersRepo
+      .createQueryBuilder('user')
+      .addSelect('user.pinHash')
+      .where('user.id = :id', { id: userId })
+      .getOne();
+    if (!user) throw new NotFoundException('Usuário não encontrado');
+    user.pinHash = pin;
+    await this.usersRepo.save(user);
+  }
+
   async adminResetPassword(userId: string, newPassword: string): Promise<void> {
     const user = await this.usersRepo
       .createQueryBuilder('user')

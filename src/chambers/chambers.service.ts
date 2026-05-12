@@ -99,4 +99,37 @@ export class ChambersService {
     if (!chamber) throw new NotFoundException('Câmara não encontrada');
     return chamber;
   }
+
+  async findBySlugPublic(slug: string): Promise<{ id: string; name: string; city: string; state: string; logoUrl: string | null; isActive: boolean }> {
+    const chamber = await this.chambersRepo.findOne({
+      where: { slug },
+      select: ['id', 'name', 'city', 'state', 'logoUrl', 'isActive'],
+    });
+    if (!chamber) throw new NotFoundException('Câmara não encontrada');
+    return chamber;
+  }
+
+  async listVereadoresBySlug(slug: string): Promise<Array<{ id: string; name: string; initials: string; party: string | null; title: string | null; avatarUrl: string | null; hasPin: boolean }>> {
+    const chamber = await this.chambersRepo.findOne({ where: { slug }, select: ['id'] });
+    if (!chamber) throw new NotFoundException('Câmara não encontrada');
+
+    const users = await this.usersRepo
+      .createQueryBuilder('user')
+      .addSelect('user.pinHash')
+      .where('user.chamberId = :chamberId', { chamberId: chamber.id })
+      .andWhere('user.isActive = true')
+      .andWhere('user.role IN (:...roles)', { roles: ['vereador', 'presidente'] })
+      .orderBy('user.name', 'ASC')
+      .getMany();
+
+    return users.map(u => ({
+      id: u.id,
+      name: u.name,
+      initials: u.initials,
+      party: u.party,
+      title: u.title,
+      avatarUrl: u.avatarUrl,
+      hasPin: !!u.pinHash,
+    }));
+  }
 }

@@ -11,7 +11,7 @@ import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
 import { UsersService } from '../users/users.service';
 import { RefreshToken } from './entities/refresh-token.entity';
-import { LoginDto, RefreshTokenDto } from './dto/login.dto';
+import { LoginDto, RefreshTokenDto, MobileLoginDto } from './dto/login.dto';
 import { JwtPayload } from './strategies/jwt.strategy';
 
 @Injectable()
@@ -67,6 +67,31 @@ export class AuthService {
       this.logger.error(`[login] erro generateTokens user=${user.id}: ${err?.message}`, err?.stack);
       throw err;
     }
+  }
+
+  async mobileLogin(dto: MobileLoginDto) {
+    this.logger.log(`[mobile-login] userId=${dto.userId}`);
+
+    const user = await this.usersService.findByIdWithPin(dto.userId);
+    if (!user) throw new UnauthorizedException('Usuário não encontrado');
+    if (!user.isActive) throw new ForbiddenException('Conta desativada');
+    if (user.role !== 'vereador' && user.role !== 'presidente') {
+      throw new ForbiddenException('Acesso ao app restrito a vereadores e presidente');
+    }
+    if (!user.pinHash) {
+      throw new UnauthorizedException('PIN não cadastrado. Solicite ao presidente.');
+    }
+
+    const valid = await user.validatePin(dto.pin);
+    if (!valid) throw new UnauthorizedException('PIN incorreto');
+
+    try {
+      await this.usersService.update(user.id, { lastLoginAt: new Date() });
+    } catch (err: any) {
+      this.logger.error(`[mobile-login] erro updateLastLogin: ${err?.message}`, err?.stack);
+    }
+
+    return this.generateTokens(user);
   }
 
   async refresh(dto: RefreshTokenDto) {

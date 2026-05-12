@@ -36,6 +36,18 @@ export class ChambersController {
     return this.chambersService.findAll();
   }
 
+  @Get('by-slug/:slug')
+  @ApiOperation({ summary: 'Buscar câmara pelo slug (público, usado pelo app mobile)' })
+  findBySlugPublic(@Param('slug') slug: string) {
+    return this.chambersService.findBySlugPublic(slug);
+  }
+
+  @Get('by-slug/:slug/vereadores')
+  @ApiOperation({ summary: 'Listar vereadores da câmara pelo slug (público, para tela de login do app)' })
+  vereadoresBySlug(@Param('slug') slug: string) {
+    return this.chambersService.listVereadoresBySlug(slug);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Buscar câmara por ID' })
   findOne(@Param('id') id: string) {

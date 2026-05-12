@@ -18,3 +18,14 @@ export class RefreshTokenDto {
   @IsString()
   refreshToken: string;
 }
+
+export class MobileLoginDto {
+  @ApiProperty({ example: 'uuid-do-vereador' })
+  @IsString()
+  userId: string;
+
+  @ApiProperty({ example: '1234', description: 'PIN de 4 dígitos' })
+  @IsString()
+  @MinLength(4)
+  pin: string;
+}

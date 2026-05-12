@@ -59,6 +59,9 @@ export class User {
   @Column({ nullable: true, type: 'timestamptz' })
   lastLoginAt: Date | null;
 
+  @Column({ select: false, nullable: true })
+  pinHash: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 
@@ -71,9 +74,17 @@ export class User {
     if (this.passwordHash && !this.passwordHash.startsWith('$2')) {
       this.passwordHash = await bcrypt.hash(this.passwordHash, 12);
     }
+    if (this.pinHash && !this.pinHash.startsWith('$2')) {
+      this.pinHash = await bcrypt.hash(this.pinHash, 12);
+    }
   }
 
   async validatePassword(password: string): Promise<boolean> {
     return bcrypt.compare(password, this.passwordHash);
+  }
+
+  async validatePin(pin: string): Promise<boolean> {
+    if (!this.pinHash) return false;
+    return bcrypt.compare(pin, this.pinHash);
   }
 }
