@@ -7,7 +7,7 @@ import { mkdirSync } from 'fs';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
-  const uploadsDir = join(process.cwd(), 'uploads');
+  const uploadsDir = process.env.UPLOADS_DIR || join(process.cwd(), 'uploads');
   mkdirSync(uploadsDir, { recursive: true });
 
   const app = await NestFactory.create<NestExpressApplication>(AppModule);

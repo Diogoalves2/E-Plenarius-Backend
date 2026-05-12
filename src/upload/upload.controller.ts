@@ -17,7 +17,8 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 
-const SYSTEM_LOGO_FILE = join(process.cwd(), 'uploads', 'system_logo.txt');
+const UPLOADS_DIR      = process.env.UPLOADS_DIR || join(process.cwd(), 'uploads');
+const SYSTEM_LOGO_FILE = join(UPLOADS_DIR, 'system_logo.txt');
 
 const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml'];
 const MAX_LOGO_BYTES   =  2 * 1024 * 1024; //  2 MB
@@ -37,7 +38,7 @@ export class UploadController {
   @UseInterceptors(
     FileInterceptor('file', {
       storage: diskStorage({
-        destination: join(process.cwd(), 'uploads'),
+        destination: UPLOADS_DIR,
         filename: (_req, file, cb) => {
           const ext = extname(file.originalname).toLowerCase();
           cb(null, `avatar_${randomBytes(16).toString('hex')}${ext}`);
@@ -65,7 +66,7 @@ export class UploadController {
   @UseInterceptors(
     FileInterceptor('file', {
       storage: diskStorage({
-        destination: join(process.cwd(), 'uploads'),
+        destination: UPLOADS_DIR,
         filename: (_req, file, cb) => {
           const ext = extname(file.originalname).toLowerCase();
           cb(null, `${randomBytes(16).toString('hex')}${ext}`);
@@ -103,7 +104,7 @@ export class UploadController {
   @UseInterceptors(
     FileInterceptor('file', {
       storage: diskStorage({
-        destination: join(process.cwd(), 'uploads'),
+        destination: UPLOADS_DIR,
         filename: (_req, file, cb) => {
           cb(null, `doc_${randomBytes(16).toString('hex')}.pdf`);
         },
