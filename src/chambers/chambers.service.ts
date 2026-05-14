@@ -118,7 +118,7 @@ export class ChambersService {
     return { ...chamber, hasActiveSession: !!active };
   }
 
-  async listVereadoresBySlug(slug: string): Promise<Array<{ id: string; name: string; initials: string; party: string | null; title: string | null; avatarUrl: string | null; hasPin: boolean }>> {
+  async listVereadoresBySlug(slug: string): Promise<Array<{ id: string; name: string; initials: string; party: string | null; title: string | null; avatarUrl: string | null; hasPin: boolean; role: string }>> {
     const chamber = await this.chambersRepo.findOne({ where: { slug }, select: ['id'] });
     if (!chamber) throw new NotFoundException('Câmara não encontrada');
 
@@ -139,6 +139,7 @@ export class ChambersService {
       title: u.title,
       avatarUrl: u.avatarUrl,
       hasPin: !!u.pinHash,
+      role: u.role,
     }));
   }
 }
