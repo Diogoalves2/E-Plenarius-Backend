@@ -62,6 +62,9 @@ export class User {
   @Column({ select: false, nullable: true })
   pinHash: string | null;
 
+  @Column({ nullable: true })
+  mobileDeviceId: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

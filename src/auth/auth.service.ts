@@ -11,6 +11,7 @@ import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
 import { UsersService } from '../users/users.service';
 import { RefreshToken } from './entities/refresh-token.entity';
+import { Session } from '../sessions/entities/session.entity';
 import { LoginDto, RefreshTokenDto, MobileLoginDto } from './dto/login.dto';
 import { JwtPayload } from './strategies/jwt.strategy';
 
@@ -24,6 +25,8 @@ export class AuthService {
     private readonly config: ConfigService,
     @InjectRepository(RefreshToken)
     private readonly refreshTokenRepo: Repository<RefreshToken>,
+    @InjectRepository(Session)
+    private readonly sessionRepo: Repository<Session>,
   ) {}
 
   async login(dto: LoginDto) {
@@ -85,13 +88,28 @@ export class AuthService {
     const valid = await user.validatePin(dto.pin);
     if (!valid) throw new UnauthorizedException('PIN incorreto');
 
-    try {
-      await this.usersService.update(user.id, { lastLoginAt: new Date() });
-    } catch (err: any) {
-      this.logger.error(`[mobile-login] erro updateLastLogin: ${err?.message}`, err?.stack);
+    // Regra: vereadores só podem entrar se houver sessão em andamento na câmara.
+    // Presidente entra sempre (precisa abrir/gerenciar sessão).
+    if (user.role === 'vereador') {
+      const activeSession = await this.sessionRepo.findOne({
+        where: { chamberId: user.chamberId as string, status: 'em_andamento' },
+      });
+      if (!activeSession) {
+        throw new ForbiddenException('Sem sessão em andamento. Aguarde o presidente abrir a sessão para entrar.');
+      }
     }
 
-    return this.generateTokens(user);
+    // Single-device session: gera novo deviceId e invalida o token anterior
+    // (qualquer outro tablet com o token antigo será deslogado no próximo request).
+    const deviceId = randomUUID();
+    user.mobileDeviceId = deviceId;
+    user.lastLoginAt = new Date();
+    await this.usersService.saveRaw(user);
+
+    // Revoga todos os refresh tokens existentes para forçar o outro device a relogar.
+    await this.refreshTokenRepo.update({ userId: user.id, revoked: false }, { revoked: true });
+
+    return this.generateTokens(user, deviceId);
   }
 
   async refresh(dto: RefreshTokenDto) {
@@ -116,12 +134,13 @@ export class AuthService {
     return { message: 'Logout realizado com sucesso' };
   }
 
-  private async generateTokens(user: any) {
+  private async generateTokens(user: any, mobileDevice?: string) {
     const payload: JwtPayload = {
       sub: user.id,
       email: user.email,
       role: user.role,
       chamberId: user.chamberId,
+      ...(mobileDevice ? { mobileDevice } : {}),
     };
 
     const accessToken = this.jwtService.sign(payload);

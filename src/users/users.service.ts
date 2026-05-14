@@ -73,6 +73,14 @@ export class UsersService {
       .getOne();
   }
 
+  async findRawById(id: string): Promise<User | null> {
+    return this.usersRepo.findOne({ where: { id } });
+  }
+
+  async saveRaw(user: User): Promise<User> {
+    return this.usersRepo.save(user);
+  }
+
   async findByIdWithPin(id: string): Promise<User | null> {
     return this.usersRepo
       .createQueryBuilder('user')

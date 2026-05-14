@@ -5,6 +5,7 @@ import { randomBytes } from 'crypto';
 import * as bcrypt from 'bcryptjs';
 import { Chamber } from './entities/chamber.entity';
 import { User } from '../users/entities/user.entity';
+import { Session } from '../sessions/entities/session.entity';
 import { CreateChamberDto } from './dto/create-chamber.dto';
 import { SetupChamberDto } from './dto/setup-chamber.dto';
 
@@ -15,6 +16,8 @@ export class ChambersService {
     private readonly chambersRepo: Repository<Chamber>,
     @InjectRepository(User)
     private readonly usersRepo: Repository<User>,
+    @InjectRepository(Session)
+    private readonly sessionsRepo: Repository<Session>,
   ) {}
 
   async setup(dto: SetupChamberDto): Promise<{ chamber: Chamber; presidenteEmail: string; presidentePassword: string }> {
@@ -100,13 +103,19 @@ export class ChambersService {
     return chamber;
   }
 
-  async findBySlugPublic(slug: string): Promise<{ id: string; name: string; city: string; state: string; logoUrl: string | null; isActive: boolean }> {
+  async findBySlugPublic(slug: string): Promise<{ id: string; name: string; city: string; state: string; logoUrl: string | null; isActive: boolean; hasActiveSession: boolean }> {
     const chamber = await this.chambersRepo.findOne({
       where: { slug },
       select: ['id', 'name', 'city', 'state', 'logoUrl', 'isActive'],
     });
     if (!chamber) throw new NotFoundException('Câmara não encontrada');
-    return chamber;
+
+    const active = await this.sessionsRepo.findOne({
+      where: { chamberId: chamber.id, status: 'em_andamento' },
+      select: ['id'],
+    });
+
+    return { ...chamber, hasActiveSession: !!active };
   }
 
   async listVereadoresBySlug(slug: string): Promise<Array<{ id: string; name: string; initials: string; party: string | null; title: string | null; avatarUrl: string | null; hasPin: boolean }>> {
