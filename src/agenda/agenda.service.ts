@@ -24,6 +24,18 @@ export class AgendaService {
     });
   }
 
+  async findVotedByChamber(chamberId: string): Promise<AgendaItem[]> {
+    return this.agendaRepo
+      .createQueryBuilder('item')
+      .leftJoinAndSelect('item.authorUser', 'author')
+      .leftJoinAndSelect('item.session', 'session')
+      .where('item.chamberId = :chamberId', { chamberId })
+      .andWhere('item.status IN (:...statuses)', { statuses: ['aprovado', 'rejeitado'] })
+      .orderBy('item.votingClosedAt', 'DESC')
+      .addOrderBy('item.createdAt', 'DESC')
+      .getMany();
+  }
+
   async findOne(id: string): Promise<AgendaItem> {
     const item = await this.agendaRepo.findOne({
       where: { id },

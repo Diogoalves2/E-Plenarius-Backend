@@ -36,6 +36,12 @@ export class AgendaController {
     return this.agendaService.findActiveVoting(sessionId);
   }
 
+  @Get('chamber/:chamberId/voted')
+  @ApiOperation({ summary: 'Listar todos os projetos votados (aprovados/rejeitados) da câmara' })
+  findVotedByChamber(@Param('chamberId') chamberId: string) {
+    return this.agendaService.findVotedByChamber(chamberId);
+  }
+
   @Get(':id')
   @Public()
   @ApiOperation({ summary: 'Buscar item por ID' })
