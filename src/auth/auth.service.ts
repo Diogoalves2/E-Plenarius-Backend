@@ -57,6 +57,17 @@ export class AuthService {
 
     if (!user.isActive) throw new ForbiddenException('Conta desativada');
 
+    // Vereador só entra se houver sessão em andamento.
+    // Presidente, secretaria e superadmin sempre.
+    if (user.role === 'vereador') {
+      const activeSession = await this.sessionRepo.findOne({
+        where: { chamberId: user.chamberId as string, status: 'em_andamento' },
+      });
+      if (!activeSession) {
+        throw new ForbiddenException('Sem sessão em andamento. Aguarde o presidente abrir a sessão para entrar.');
+      }
+    }
+
     try {
       await this.usersService.update(user.id, { lastLoginAt: new Date() });
     } catch (err: any) {
