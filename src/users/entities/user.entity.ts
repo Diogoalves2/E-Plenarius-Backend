@@ -65,6 +65,9 @@ export class User {
   @Column({ nullable: true })
   mobileDeviceId: string | null;
 
+  @Column({ nullable: true, type: 'int' })
+  audioChannel: number | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

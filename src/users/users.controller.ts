@@ -74,6 +74,26 @@ export class UsersController {
     return this.usersService.adminResetPassword(id, body.newPassword);
   }
 
+  @Patch(':id/audio-channel')
+  @UseGuards(RolesGuard)
+  @Roles('presidente', 'superadmin')
+  @ApiOperation({ summary: 'Definir canal de áudio do vereador na mesa de som (1-24)' })
+  async setAudioChannel(
+    @Param('id') id: string,
+    @Body() body: { channel: number | null },
+  ) {
+    if (body.channel !== null) {
+      const ch = Number(body.channel);
+      if (!Number.isInteger(ch) || ch < 1 || ch > 32) {
+        throw new BadRequestException('Canal deve ser inteiro entre 1 e 32');
+      }
+      await this.usersService.setAudioChannel(id, ch);
+      return { ok: true, channel: ch };
+    }
+    await this.usersService.setAudioChannel(id, null);
+    return { ok: true, channel: null };
+  }
+
   @Patch(':id/pin')
   @UseGuards(RolesGuard)
   @Roles('presidente', 'superadmin')

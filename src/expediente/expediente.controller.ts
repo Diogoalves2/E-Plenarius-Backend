@@ -115,6 +115,15 @@ export class ExpedienteController {
     return this.service.encerrar(sessionId);
   }
 
+  @Post(':sessionId/cortar-fala')
+  @UseGuards(RolesGuard)
+  @Roles('presidente')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Presidente muta canal de áudio do orador atual (sem encerrar expediente)' })
+  cortarFala(@Param('sessionId') sessionId: string) {
+    return this.service.cortarFala(sessionId);
+  }
+
   // ─── Apartes ───────────────────────────────────────────────────────────────
 
   @Post(':sessionId/aparte/solicitar')

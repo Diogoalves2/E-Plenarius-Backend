@@ -4,6 +4,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { InscricaoExpediente } from './entities/inscricao-expediente.entity';
+import { User } from '../users/entities/user.entity';
 import { VotingGateway } from '../voting/voting.gateway';
 import { InscreverExpedienteDto } from './dto/inscrever-expediente.dto';
 import { CriarConvidadoDto } from './dto/criar-convidado.dto';
@@ -51,8 +52,24 @@ export class ExpedienteService {
   constructor(
     @InjectRepository(InscricaoExpediente)
     private inscricoesRepo: Repository<InscricaoExpediente>,
+    @InjectRepository(User)
+    private usersRepo: Repository<User>,
     private gateway: VotingGateway,
   ) {}
+
+  /** Emite evento audio:mute via socket pra bridge agent local. Silencioso se canal nao configurado. */
+  private async emitAudioMute(sessionId: string, userId: string | undefined, reason: string): Promise<void> {
+    if (!userId) return;
+    try {
+      const user = await this.usersRepo.findOne({ where: { id: userId }, select: ['id', 'audioChannel'] });
+      if (!user?.audioChannel) return;
+      this.gateway.emitToSession(sessionId, 'audio:mute', {
+        channel: user.audioChannel,
+        userId,
+        reason,
+      });
+    } catch { /* ignora — corte de áudio é best-effort */ }
+  }
 
   // ─── Inscrições ────────────────────────────────────────────────────────────
 
@@ -171,6 +188,7 @@ export class ExpedienteService {
         this.clearTimer(sessionId);
         await this.inscricoesRepo.update(inscricaoId, { status: 'concluido' });
         this.gateway.emitToSession(sessionId, 'expediente:encerrado', { motivo: 'tempo_esgotado' });
+        await this.emitAudioMute(sessionId, state.vereador?.id, 'tempo_esgotado');
       }
     }, 1000);
 
@@ -208,11 +226,20 @@ export class ExpedienteService {
       state.aparteAtivo = null;
     }
 
-    const { inscricaoId } = state;
+    const { inscricaoId, vereador } = state;
     this.clearTimer(sessionId);
     await this.inscricoesRepo.update(inscricaoId, { status: 'concluido' });
     this.gateway.emitToSession(sessionId, 'expediente:encerrado', { motivo: 'encerrado_presidente' });
+    await this.emitAudioMute(sessionId, vereador?.id, 'encerrado_presidente');
     return { ok: true };
+  }
+
+  /** Botão "Cortar fala": muta canal do orador atual sem encerrar expediente. */
+  async cortarFala(sessionId: string) {
+    const state = this.timers.get(sessionId);
+    if (!state) throw new BadRequestException('Nenhum expediente ativo');
+    await this.emitAudioMute(sessionId, state.vereador?.id, 'cortar_fala');
+    return { ok: true, channel: state.vereador?.id };
   }
 
   getAtivo(sessionId: string) {
@@ -312,6 +339,7 @@ export class ExpedienteService {
     const state = this.timers.get(sessionId);
     if (!state?.aparteAtivo) return;
 
+    const aparteVereadorId = state.aparteAtivo.vereador?.id;
     clearInterval(state.aparteAtivo.timer);
     state.aparteAtivo = null;
     state.paused = false;
@@ -319,6 +347,8 @@ export class ExpedienteService {
     this.gateway.emitToSession(sessionId, 'aparte:encerrado', {
       tempoRestanteOrador: state.tempoRestante,
     });
+    // muta canal do aparteante
+    this.emitAudioMute(sessionId, aparteVereadorId, 'aparte_encerrado').catch(() => {});
   }
 
   private clearTimer(sessionId: string) {

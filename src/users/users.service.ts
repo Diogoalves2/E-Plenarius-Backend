@@ -44,14 +44,14 @@ export class UsersService {
     return this.usersRepo.find({
       where: { chamberId },
       order: { isActive: 'DESC', name: 'ASC' },
-      select: ['id', 'name', 'email', 'username', 'role', 'title', 'party', 'initials', 'avatarUrl', 'isActive', 'lastLoginAt', 'createdAt'],
+      select: ['id', 'name', 'email', 'username', 'role', 'title', 'party', 'initials', 'avatarUrl', 'isActive', 'lastLoginAt', 'audioChannel', 'createdAt'],
     });
   }
 
   async findById(id: string): Promise<User> {
     const user = await this.usersRepo.findOne({
       where: { id },
-      select: ['id', 'name', 'email', 'username', 'role', 'title', 'party', 'initials', 'avatarUrl', 'isActive', 'lastLoginAt', 'chamberId', 'createdAt'],
+      select: ['id', 'name', 'email', 'username', 'role', 'title', 'party', 'initials', 'avatarUrl', 'isActive', 'lastLoginAt', 'audioChannel', 'chamberId', 'createdAt'],
     });
     if (!user) throw new NotFoundException('Usuário não encontrado');
     return user;
@@ -87,6 +87,13 @@ export class UsersService {
       .addSelect('user.pinHash')
       .where('user.id = :id', { id })
       .getOne();
+  }
+
+  async setAudioChannel(userId: string, channel: number | null): Promise<void> {
+    const user = await this.usersRepo.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException('Usuário não encontrado');
+    user.audioChannel = channel;
+    await this.usersRepo.save(user);
   }
 
   async setPin(userId: string, pin: string | null): Promise<void> {
