@@ -99,15 +99,13 @@ export class AuthService {
       }
     }
 
-    // Single-device session: gera novo deviceId e invalida o token anterior
-    // (qualquer outro tablet com o token antigo será deslogado no próximo request).
+    // Single-device session: gera novo deviceId. JwtStrategy invalida tokens
+    // mobile antigos no próximo request (payload.mobileDevice != user.mobileDeviceId).
+    // NÃO revogamos refresh tokens aqui para não deslogar sessão web do mesmo user.
     const deviceId = randomUUID();
     user.mobileDeviceId = deviceId;
     user.lastLoginAt = new Date();
     await this.usersService.saveRaw(user);
-
-    // Revoga todos os refresh tokens existentes para forçar o outro device a relogar.
-    await this.refreshTokenRepo.update({ userId: user.id, revoked: false }, { revoked: true });
 
     return this.generateTokens(user, deviceId);
   }
