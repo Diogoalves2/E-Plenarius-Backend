@@ -47,7 +47,7 @@ interface TimerState {
 const APARTE_DURACAO = 120; // 2 minutos
 
 type TipoExpediente = 'grande' | 'pequeno';
-interface InscricoesAbertasState { grande: boolean; pequeno: boolean; }
+export interface InscricoesAbertasState { grande: boolean; pequeno: boolean; }
 
 @Injectable()
 export class ExpedienteService {
