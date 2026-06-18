@@ -5,6 +5,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { InscricaoExpediente } from './entities/inscricao-expediente.entity';
 import { User } from '../users/entities/user.entity';
+import { SessionPresence } from '../sessions/entities/session-presence.entity';
 import { VotingGateway } from '../voting/voting.gateway';
 import { InscreverExpedienteDto } from './dto/inscrever-expediente.dto';
 import { CriarConvidadoDto } from './dto/criar-convidado.dto';
@@ -45,17 +46,51 @@ interface TimerState {
 
 const APARTE_DURACAO = 120; // 2 minutos
 
+type TipoExpediente = 'grande' | 'pequeno';
+interface InscricoesAbertasState { grande: boolean; pequeno: boolean; }
+
 @Injectable()
 export class ExpedienteService {
   private timers = new Map<string, TimerState>();
+  /** Estado de inscrições abertas por sessão. Default: ambos fechados. */
+  private inscricoesAbertas = new Map<string, InscricoesAbertasState>();
 
   constructor(
     @InjectRepository(InscricaoExpediente)
     private inscricoesRepo: Repository<InscricaoExpediente>,
     @InjectRepository(User)
     private usersRepo: Repository<User>,
+    @InjectRepository(SessionPresence)
+    private presencesRepo: Repository<SessionPresence>,
     private gateway: VotingGateway,
   ) {}
+
+  // ─── Estado inscrições ─────────────────────────────────────────────────────
+
+  private getEstado(sessionId: string): InscricoesAbertasState {
+    if (!this.inscricoesAbertas.has(sessionId)) {
+      this.inscricoesAbertas.set(sessionId, { grande: false, pequeno: false });
+    }
+    return this.inscricoesAbertas.get(sessionId)!;
+  }
+
+  getInscricoesStatus(sessionId: string): InscricoesAbertasState {
+    return { ...this.getEstado(sessionId) };
+  }
+
+  abrirInscricoes(sessionId: string, tipo: TipoExpediente) {
+    const state = this.getEstado(sessionId);
+    state[tipo] = true;
+    this.gateway.emitToSession(sessionId, 'expediente:inscricoes_status', { tipo, aberta: true });
+    return { ok: true, tipo, aberta: true };
+  }
+
+  encerrarInscricoes(sessionId: string, tipo: TipoExpediente) {
+    const state = this.getEstado(sessionId);
+    state[tipo] = false;
+    this.gateway.emitToSession(sessionId, 'expediente:inscricoes_status', { tipo, aberta: false });
+    return { ok: true, tipo, aberta: false };
+  }
 
   /** Emite evento audio:mute via socket pra bridge agent local.
    *  Emite tanto pro room session:* (compat) quanto chamber:* (bridge persistente). */
@@ -76,10 +111,26 @@ export class ExpedienteService {
   // ─── Inscrições ────────────────────────────────────────────────────────────
 
   async inscrever(sessionId: string, userId: string, dto: InscreverExpedienteDto) {
+    // 1. Inscrições abertas pelo presidente?
+    const state = this.getEstado(sessionId);
+    if (!state[dto.tipo]) {
+      throw new BadRequestException(
+        `Inscrições para o ${dto.tipo} expediente ainda não foram abertas pelo presidente.`,
+      );
+    }
+
+    // 2. Presença confirmada na sessão?
+    const presence = await this.presencesRepo.findOne({ where: { sessionId, userId } });
+    if (!presence) {
+      throw new BadRequestException('Você precisa confirmar sua presença na sessão antes de se inscrever.');
+    }
+
+    // 3. Já inscrito?
     const existing = await this.inscricoesRepo.findOne({
       where: { sessionId, userId, tipo: dto.tipo, status: 'aguardando' },
     });
     if (existing) throw new BadRequestException('Já inscrito neste expediente');
+
     const inscricao = this.inscricoesRepo.create({ sessionId, userId, tipo: dto.tipo, status: 'aguardando' });
     const saved = await this.inscricoesRepo.save(inscricao);
     this.gateway.emitToSession(sessionId, 'expediente:inscricao_atualizada', { tipo: dto.tipo, action: 'inscrito' });
@@ -246,8 +297,21 @@ export class ExpedienteService {
 
   getAtivo(sessionId: string) {
     const state = this.timers.get(sessionId);
-    if (!state) return null;
+    const inscricoesStatus = this.getInscricoesStatus(sessionId);
+    if (!state) return { ativo: null, inscricoesAbertas: inscricoesStatus };
     return {
+      ativo: {
+        inscricaoId: state.inscricaoId,
+        tipo: state.tipo,
+        tempoRestante: state.tempoRestante,
+        vereador: state.vereador,
+        paused: state.paused,
+        solicitacoesAparte: state.solicitacoes,
+        aparteAtivo: state.aparteAtivo
+          ? { tempoRestante: state.aparteAtivo.tempoRestante, vereador: state.aparteAtivo.vereador }
+          : null,
+      },
+      // backwards compat — frontend antigo lia direto da raiz
       inscricaoId: state.inscricaoId,
       tipo: state.tipo,
       tempoRestante: state.tempoRestante,
@@ -257,6 +321,7 @@ export class ExpedienteService {
       aparteAtivo: state.aparteAtivo
         ? { tempoRestante: state.aparteAtivo.tempoRestante, vereador: state.aparteAtivo.vereador }
         : null,
+      inscricoesAbertas: inscricoesStatus,
     };
   }
 

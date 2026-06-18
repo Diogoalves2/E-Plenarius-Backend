@@ -20,6 +20,39 @@ import { Public } from '../common/decorators/public.decorator';
 export class ExpedienteController {
   constructor(private readonly service: ExpedienteService) {}
 
+  // ─── Estado inscrições (presidente abre/encerra) ──────────────────────────
+
+  @Get(':sessionId/inscricoes-status')
+  @Public()
+  @ApiOperation({ summary: 'Estado das inscrições (grande/pequeno: aberta/fechada)' })
+  getInscricoesStatus(@Param('sessionId') sessionId: string) {
+    return this.service.getInscricoesStatus(sessionId);
+  }
+
+  @Post(':sessionId/inscricoes/abrir/:tipo')
+  @UseGuards(RolesGuard)
+  @Roles('presidente')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Presidente abre inscrições do tipo (grande|pequeno)' })
+  abrirInscricoes(
+    @Param('sessionId') sessionId: string,
+    @Param('tipo') tipo: 'grande' | 'pequeno',
+  ) {
+    return this.service.abrirInscricoes(sessionId, tipo);
+  }
+
+  @Post(':sessionId/inscricoes/encerrar/:tipo')
+  @UseGuards(RolesGuard)
+  @Roles('presidente')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Presidente encerra inscrições do tipo (grande|pequeno)' })
+  encerrarInscricoes(
+    @Param('sessionId') sessionId: string,
+    @Param('tipo') tipo: 'grande' | 'pequeno',
+  ) {
+    return this.service.encerrarInscricoes(sessionId, tipo);
+  }
+
   // ─── Inscrições ────────────────────────────────────────────────────────────
 
   @Post(':sessionId/inscrever')
