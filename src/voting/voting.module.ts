@@ -9,12 +9,14 @@ import { VotingController } from './voting.controller';
 import { VotingGateway } from './voting.gateway';
 import { AgendaModule } from '../agenda/agenda.module';
 import { AuditModule } from '../audit/audit.module';
+import { ChambersModule } from '../chambers/chambers.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Vote, User]),
     AgendaModule,
     AuditModule,
+    ChambersModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: (config: ConfigService) => ({

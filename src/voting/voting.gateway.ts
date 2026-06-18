@@ -7,6 +7,7 @@ import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
 import { Logger } from '@nestjs/common';
 import { AgendaService } from '../agenda/agenda.service';
+import { ChambersService } from '../chambers/chambers.service';
 
 @WebSocketGateway({
   cors: { origin: true, credentials: true },
@@ -21,6 +22,7 @@ export class VotingGateway implements OnGatewayConnection, OnGatewayDisconnect {
   constructor(
     private readonly jwtService: JwtService,
     private readonly agendaService: AgendaService,
+    private readonly chambersService: ChambersService,
   ) {}
 
   async handleConnection(client: Socket) {
@@ -75,6 +77,21 @@ export class VotingGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() data: { sessionId: string },
   ) {
     client.leave(`session:${data.sessionId}`);
+  }
+
+  @SubscribeMessage('chamber:join_by_slug')
+  async handleJoinChamberBySlug(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { slug: string },
+  ) {
+    try {
+      const chamber = await this.chambersService.findBySlug(data.slug);
+      client.join(`chamber:${chamber.id}`);
+      this.logger.log(`Bridge/client joined chamber:${chamber.id} via slug=${data.slug}`);
+      return { event: 'chamber:joined', data: { chamberId: chamber.id, name: chamber.name } };
+    } catch (err: any) {
+      return { event: 'chamber:join_failed', data: { error: err?.message ?? 'erro' } };
+    }
   }
 
   emitToSession(sessionId: string, event: string, data: any) {

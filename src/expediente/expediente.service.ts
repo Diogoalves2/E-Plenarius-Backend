@@ -57,17 +57,19 @@ export class ExpedienteService {
     private gateway: VotingGateway,
   ) {}
 
-  /** Emite evento audio:mute via socket pra bridge agent local. Silencioso se canal nao configurado. */
+  /** Emite evento audio:mute via socket pra bridge agent local.
+   *  Emite tanto pro room session:* (compat) quanto chamber:* (bridge persistente). */
   private async emitAudioMute(sessionId: string, userId: string | undefined, reason: string): Promise<void> {
     if (!userId) return;
     try {
-      const user = await this.usersRepo.findOne({ where: { id: userId }, select: ['id', 'audioChannel'] });
-      if (!user?.audioChannel) return;
-      this.gateway.emitToSession(sessionId, 'audio:mute', {
-        channel: user.audioChannel,
-        userId,
-        reason,
+      const user = await this.usersRepo.findOne({
+        where: { id: userId },
+        select: ['id', 'audioChannel', 'chamberId'],
       });
+      if (!user?.audioChannel) return;
+      const payload = { channel: user.audioChannel, userId, reason, sessionId };
+      this.gateway.emitToSession(sessionId, 'audio:mute', payload);
+      if (user.chamberId) this.gateway.emitToChamber(user.chamberId, 'audio:mute', payload);
     } catch { /* ignora — corte de áudio é best-effort */ }
   }
 
