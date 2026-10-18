@@ -46,6 +46,14 @@ export class AuditLog {
   @Column({ nullable: true })
   previousHash: string;
 
+  /** Posição na cadeia da câmara (1, 2, 3...). */
+  @Column({ type: 'int', nullable: true })
+  seq: number | null;
+
+  /** Instante em ms usado no hash (createdAt do banco pode perder precisão/fuso). */
+  @Column({ type: 'bigint', nullable: true })
+  ts: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 }

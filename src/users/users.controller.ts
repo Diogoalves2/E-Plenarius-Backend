@@ -1,8 +1,9 @@
-import { Controller, Get, Post, Patch, Body, Param, UseGuards, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Body, Param, UseGuards, BadRequestException, ForbiddenException, ParseUUIDPipe } from '@nestjs/common';
 
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateUserDto, ChangePasswordDto, AdminResetPasswordDto } from './dto/update-user.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -20,15 +21,22 @@ export class UsersController {
   @UseGuards(RolesGuard)
   @Roles('presidente', 'superadmin')
   @ApiOperation({ summary: 'Cadastrar vereador (presidente da câmara ou superadmin)' })
-  create(@Body() dto: CreateUserDto) {
+  create(@Body() dto: CreateUserDto, @CurrentUser() actor: any) {
+    if (actor.role !== 'superadmin' && dto.chamberId !== actor.chamberId) {
+      throw new ForbiddenException('Só é possível cadastrar membros da sua câmara');
+    }
     return this.usersService.create(dto);
   }
 
   @Get('chamber/:chamberId')
   @Public()
   @ApiOperation({ summary: 'Listar vereadores da câmara' })
-  findByChamber(@Param('chamberId') chamberId: string) {
-    return this.usersService.findByChamber(chamberId);
+  async findByChamber(@Param('chamberId', ParseUUIDPipe) chamberId: string, @CurrentUser() user: any) {
+    const users = await this.usersService.findByChamber(chamberId);
+    const canSeePrivate = user && (user.role === 'superadmin' || user.chamberId === chamberId);
+    if (canSeePrivate) return users;
+    // Visitante (telão/público): sem e-mail, username, último login.
+    return users.map(({ email, username, lastLoginAt, ...pub }) => pub);
   }
 
   @Get('me')
@@ -50,15 +58,16 @@ export class UsersController {
   @UseGuards(RolesGuard)
   @Roles('presidente', 'superadmin')
   @ApiOperation({ summary: 'Editar dados de um usuário' })
-  update(@Param('id') id: string, @Body() body: any) {
-    return this.usersService.update(id, body);
+  async update(@Param('id', ParseUUIDPipe) id: string, @Body() body: UpdateUserDto, @CurrentUser() actor: any) {
+    await this.usersService.assertCanManage(actor, id);
+    return this.usersService.updateProfile(id, body);
   }
 
   @Patch('me/password')
   @ApiOperation({ summary: 'Alterar senha do usuário autenticado' })
   changePassword(
     @CurrentUser() user: any,
-    @Body() body: { currentPassword: string; newPassword: string },
+    @Body() body: ChangePasswordDto,
   ) {
     return this.usersService.changePassword(user.id, body.currentPassword, body.newPassword);
   }
@@ -67,10 +76,12 @@ export class UsersController {
   @UseGuards(RolesGuard)
   @Roles('presidente', 'superadmin')
   @ApiOperation({ summary: 'Presidente redefine senha de um vereador (sem exigir senha atual)' })
-  adminResetPassword(
-    @Param('id') id: string,
-    @Body() body: { newPassword: string },
+  async adminResetPassword(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: AdminResetPasswordDto,
+    @CurrentUser() actor: any,
   ) {
+    await this.usersService.assertCanManage(actor, id);
     return this.usersService.adminResetPassword(id, body.newPassword);
   }
 
@@ -79,9 +90,11 @@ export class UsersController {
   @Roles('presidente', 'superadmin')
   @ApiOperation({ summary: 'Definir canal de áudio do vereador na mesa de som (1-24)' })
   async setAudioChannel(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() body: { channel: number | null },
+    @CurrentUser() actor: any,
   ) {
+    await this.usersService.assertCanManage(actor, id);
     if (body.channel !== null) {
       const ch = Number(body.channel);
       if (!Number.isInteger(ch) || ch < 1 || ch > 32) {
@@ -97,13 +110,18 @@ export class UsersController {
   @Patch(':id/pin')
   @UseGuards(RolesGuard)
   @Roles('presidente', 'superadmin')
-  @ApiOperation({ summary: 'Definir/alterar PIN do app mobile (4 dígitos) de um vereador' })
+  @ApiOperation({ summary: 'Definir/alterar PIN do app mobile (6 dígitos) de um vereador' })
   async setPin(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() body: { pin: string | null },
+    @CurrentUser() actor: any,
   ) {
-    if (body.pin !== null && !/^\d{4}$/.test(body.pin)) {
-      throw new BadRequestException('PIN deve ter exatamente 4 dígitos numéricos');
+    await this.usersService.assertCanManage(actor, id);
+    if (body.pin !== null && !/^\d{6}$/.test(String(body.pin))) {
+      throw new BadRequestException('PIN deve ter exatamente 6 dígitos numéricos');
+    }
+    if (body.pin !== null && /^(\d)\1{5}$|^(012345|123456|234567|345678|456789|987654|876543|765432|654321|543210)$/.test(body.pin)) {
+      throw new BadRequestException('PIN muito fácil (sequência ou dígitos repetidos). Escolha outro.');
     }
     await this.usersService.setPin(id, body.pin);
     return { ok: true, hasPin: body.pin !== null };
@@ -111,7 +129,11 @@ export class UsersController {
 
   @Get(':id')
   @ApiOperation({ summary: 'Buscar vereador por ID' })
-  findOne(@Param('id') id: string) {
-    return this.usersService.findById(id);
+  async findOne(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() actor: any) {
+    const user = await this.usersService.findById(id);
+    if (actor.role !== 'superadmin' && actor.id !== id && user.chamberId !== actor.chamberId) {
+      throw new ForbiddenException('Sem acesso a usuários de outra câmara');
+    }
+    return user;
   }
 }

@@ -38,11 +38,24 @@ export class Vote {
   @Column()
   chamberId: string;
 
+  /** Em votação secreta grava 'secreta' — a escolha individual nunca é persistida. */
   @Column({ type: 'varchar' })
-  choice: VoteChoice;
+  choice: VoteChoice | 'secreta';
 
+  /** Comprovante exibido ao vereador (prefixo do chainHash). */
   @Column({ unique: true })
   hash: string;
+
+  /** Ordem do voto dentro do item (1, 2, 3...). */
+  @Column({ type: 'int', nullable: true })
+  seq: number | null;
+
+  @Column({ nullable: true })
+  prevHash: string | null;
+
+  /** sha256(prevHash + dados do voto): alterar/remover um voto quebra a cadeia do item. */
+  @Column({ nullable: true })
+  chainHash: string | null;
 
   @Column({ nullable: true })
   ipAddress: string;

@@ -1,8 +1,9 @@
-import { Injectable, NotFoundException, ConflictException, UnauthorizedException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, UnauthorizedException, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from './entities/user.entity';
 import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
 
 @Injectable()
 export class UsersService {
@@ -104,7 +105,22 @@ export class UsersService {
       .getOne();
     if (!user) throw new NotFoundException('Usuário não encontrado');
     user.pinHash = pin;
+    // PIN novo derruba a sessão atual do app (token mobile + refresh mobile).
+    user.mobileDeviceId = null;
     await this.usersRepo.save(user);
+    await this.usersRepo.query(
+      `UPDATE refresh_tokens SET revoked = true WHERE "userId" = $1 AND "mobileDevice" IS NOT NULL AND revoked = false`,
+      [userId],
+    );
+  }
+
+  /** Troca de senha encerra todas as sessões (web e app). */
+  private async revokeAllSessions(userId: string): Promise<void> {
+    await this.usersRepo.query(
+      `UPDATE refresh_tokens SET revoked = true WHERE "userId" = $1 AND revoked = false`,
+      [userId],
+    );
+    await this.usersRepo.update(userId, { mobileDeviceId: null });
   }
 
   async adminResetPassword(userId: string, newPassword: string): Promise<void> {
@@ -116,11 +132,44 @@ export class UsersService {
     if (!user) throw new NotFoundException('Usuário não encontrado');
     user.passwordHash = newPassword;
     await this.usersRepo.save(user);
+    await this.revokeAllSessions(userId);
   }
 
   async update(id: string, dto: Partial<{ name: string; email: string; role: string; title: string; party: string; initials: string; avatarUrl: string; isActive: boolean; lastLoginAt: Date }>): Promise<Partial<User>> {
     const user = await this.usersRepo.findOne({ where: { id } });
     if (!user) throw new NotFoundException('Usuário não encontrado');
+    Object.assign(user, dto);
+    const saved = await this.usersRepo.save(user);
+    const { passwordHash, ...result } = saved as any;
+    return result;
+  }
+
+  /** Superadmin gerencia qualquer um; presidente só membros da própria câmara (nunca superadmin). */
+  async assertCanManage(actor: { id: string; role: string; chamberId: string | null }, targetId: string): Promise<void> {
+    if (actor.role === 'superadmin') return;
+    const target = await this.usersRepo.findOne({ where: { id: targetId }, select: ['id', 'chamberId', 'role'] });
+    if (!target) throw new NotFoundException('Usuário não encontrado');
+    if (!actor.chamberId || target.chamberId !== actor.chamberId || target.role === 'superadmin') {
+      throw new ForbiddenException('Sem permissão para gerenciar este usuário');
+    }
+  }
+
+  async updateProfile(id: string, dto: UpdateUserDto): Promise<Partial<User>> {
+    const user = await this.usersRepo.findOne({ where: { id } });
+    if (!user) throw new NotFoundException('Usuário não encontrado');
+
+    if (dto.email !== undefined && dto.email !== user.email) {
+      const existing = await this.usersRepo.findOne({ where: { email: dto.email } });
+      if (existing && existing.id !== id) throw new ConflictException('E-mail já cadastrado');
+    }
+    if (dto.username !== undefined) {
+      dto.username = dto.username?.trim().toLowerCase() || null;
+      if (dto.username) {
+        const existing = await this.usersRepo.findOne({ where: { username: dto.username } });
+        if (existing && existing.id !== id) throw new ConflictException('Nome de usuário já em uso');
+      }
+    }
+
     Object.assign(user, dto);
     const saved = await this.usersRepo.save(user);
     const { passwordHash, ...result } = saved as any;
@@ -158,6 +207,7 @@ export class UsersService {
 
     user.passwordHash = newPassword;
     await this.usersRepo.save(user);
+    await this.revokeAllSessions(userId);
   }
 
   private extractInitials(name: string): string {

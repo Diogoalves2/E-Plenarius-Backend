@@ -8,6 +8,7 @@ import { JwtService } from '@nestjs/jwt';
 import { Logger } from '@nestjs/common';
 import { AgendaService } from '../agenda/agenda.service';
 import { ChambersService } from '../chambers/chambers.service';
+import { maskSecretCounts } from '../common/integrity';
 
 @WebSocketGateway({
   cors: { origin: true, credentials: true },
@@ -53,19 +54,23 @@ export class VotingGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { sessionId: string },
   ) {
+    if (!data || typeof data.sessionId !== 'string' || !/^[0-9a-f-]{36}$/i.test(data.sessionId)) return;
     client.join(`session:${data.sessionId}`);
     this.logger.log(`${client.data.user?.email ?? 'guest'} joined session:${data.sessionId}`);
 
     // Envia o estado atual da votação para quem acabou de entrar
-    const activeItem = await this.agendaService.findActiveVoting(data.sessionId);
+    const active = await this.agendaService.findActiveVoting(data.sessionId);
+    const item = active ? maskSecretCounts(active) : null;
     client.emit('voting:state', {
-      item: activeItem ?? null,
-      counts: activeItem ? {
-        sim: activeItem.votesYes ?? 0,
-        nao: activeItem.votesNo ?? 0,
-        abstencao: activeItem.votesAbstain ?? 0,
-      } : { sim: 0, nao: 0, abstencao: 0 },
-      open: !!activeItem,
+      item,
+      // Secreta em andamento: placar parcial oculto (null) — só o total.
+      counts: !item
+        ? { sim: 0, nao: 0, abstencao: 0 }
+        : item.countsHidden
+          ? null
+          : { sim: item.votesYes ?? 0, nao: item.votesNo ?? 0, abstencao: item.votesAbstain ?? 0 },
+      totalVotes: item?.votesTotal ?? 0,
+      open: !!item,
     });
 
     return { event: 'session:joined', data: { sessionId: data.sessionId } };

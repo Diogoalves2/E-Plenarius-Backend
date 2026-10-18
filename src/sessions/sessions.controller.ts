@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Delete, Param, Body, Patch, UseGuards, HttpCode } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Param, Body, Patch, UseGuards, HttpCode, ParseUUIDPipe, BadRequestException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { SessionsService } from './sessions.service';
 import { CreateSessionDto } from './dto/create-session.dto';
@@ -7,19 +7,24 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Public } from '../common/decorators/public.decorator';
+import { ChamberAccessService } from '../common/access/chamber-access.service';
 
 @ApiTags('sessions')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('sessions')
 export class SessionsController {
-  constructor(private readonly sessionsService: SessionsService) {}
+  constructor(
+    private readonly sessionsService: SessionsService,
+    private readonly access: ChamberAccessService,
+  ) {}
 
   @Post()
   @UseGuards(RolesGuard)
   @Roles('presidente')
   @ApiOperation({ summary: 'Criar sessão' })
   create(@Body() dto: CreateSessionDto, @CurrentUser() user: any) {
+    this.access.assertChamber(user, dto.chamberId);
     return this.sessionsService.create(dto, user.id);
   }
 
@@ -55,7 +60,8 @@ export class SessionsController {
   @UseGuards(RolesGuard)
   @Roles('presidente')
   @ApiOperation({ summary: 'Iniciar sessão' })
-  start(@Param('id') id: string) {
+  async start(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: any) {
+    await this.access.assertSession(user, id);
     return this.sessionsService.start(id);
   }
 
@@ -63,7 +69,8 @@ export class SessionsController {
   @UseGuards(RolesGuard)
   @Roles('presidente')
   @ApiOperation({ summary: 'Encerrar sessão' })
-  end(@Param('id') id: string) {
+  async end(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: any) {
+    await this.access.assertSession(user, id);
     return this.sessionsService.end(id);
   }
 
@@ -71,16 +78,20 @@ export class SessionsController {
   @UseGuards(RolesGuard)
   @Roles('presidente')
   @ApiOperation({ summary: 'Atualizar dados da transmissão (YouTube)' })
-  updateStream(
-    @Param('id') id: string,
+  async updateStream(
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() body: { youtubeUrl?: string; youtubeThumbnailUrl?: string },
+    @CurrentUser() user: any,
   ) {
+    await this.access.assertSession(user, id);
     return this.sessionsService.updateStream(id, body);
   }
 
   @Post(':id/presence')
   @ApiOperation({ summary: 'Confirmar presença na sessão' })
-  confirmPresence(@Param('id') id: string, @CurrentUser() user: any) {
+  async confirmPresence(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: any) {
+    const session = await this.access.assertSession(user, id);
+    if (session.status === 'encerrada') throw new BadRequestException('Sessão já encerrada');
     return this.sessionsService.confirmPresence(id, user.id);
   }
 

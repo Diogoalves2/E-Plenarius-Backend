@@ -31,3 +31,6 @@ coverage/
 
 # user uploads
 uploads/
+
+# deploy
+backups/

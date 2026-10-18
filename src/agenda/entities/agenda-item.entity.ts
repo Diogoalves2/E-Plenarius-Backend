@@ -75,6 +75,10 @@ export class AgendaItem {
   @Column({ nullable: true })
   votesAbstain: number;
 
+  /** Hash do resultado (placar + último elo da cadeia de votos). Vai impresso na ata. */
+  @Column({ nullable: true })
+  resultHash: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

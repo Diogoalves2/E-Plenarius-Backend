@@ -1,0 +1,77 @@
+# Produção na VPS: Postgres + backend. Nginx do host faz HTTPS e proxy para 127.0.0.1:${API_HOST_PORT}.
+#   cp .env.example .env.prod   (preencher)
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+#
+# Backend roda em UMA instância: timers do expediente e bloqueio de login ficam em memória.
+
+name: eplenarius
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: eplenarius_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-eplenarius}
+      POSTGRES_USER: ${DB_USER:-eplenarius}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?defina DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backups:/backups
+    # VPS compartilhada: limites para um projeto não derrubar os outros.
+    mem_limit: 768m
+    cpus: 1.0
+    security_opt: ['no-new-privileges:true']
+    shm_size: 128m
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${DB_USER:-eplenarius} -d ${DB_NAME:-eplenarius}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Sem "ports": banco acessível só pela rede interna do compose.
+
+  api:
+    build: .
+    image: eplenarius-backend:latest
+    container_name: eplenarius_api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-eplenarius}
+      DB_USER: ${DB_USER:-eplenarius}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_SSL: 'false'
+      DB_SYNCHRONIZE: ${DB_SYNCHRONIZE:-false}
+      JWT_SECRET: ${JWT_SECRET:?defina JWT_SECRET}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-15m}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?defina JWT_REFRESH_SECRET}
+      JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN:-7d}
+      FRONTEND_URL: ${FRONTEND_URL:?defina FRONTEND_URL}
+      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
+      SWAGGER_ENABLED: ${SWAGGER_ENABLED:-false}
+      UPLOADS_DIR: /app/uploads
+    volumes:
+      - uploads:/app/uploads
+    # Endurecimento: FS só leitura (exceto uploads e /tmp), sem capabilities, sem escalada.
+    read_only: true
+    tmpfs: ['/tmp:size=64m']
+    cap_drop: ['ALL']
+    security_opt: ['no-new-privileges:true']
+    mem_limit: 768m
+    cpus: 1.0
+    pids_limit: 256
+    ports:
+      - '127.0.0.1:${API_HOST_PORT:-3010}:3001'
+    logging:
+      driver: json-file
+      options: { max-size: '10m', max-file: '5' }
+
+volumes:
+  pgdata:
+  uploads:

@@ -68,21 +68,4 @@ export class AgendaService {
     item.votesAbstain = 0;
     return this.agendaRepo.save(item);
   }
-
-  async closeVoting(id: string): Promise<AgendaItem> {
-    const item = await this.findOne(id);
-    if (item.status !== 'em_votacao')
-      throw new BadRequestException('Nenhuma votação em andamento para este item');
-    item.status = (item.votesYes ?? 0) > (item.votesNo ?? 0) ? 'aprovado' : 'rejeitado';
-    item.votingClosedAt = new Date();
-    return this.agendaRepo.save(item);
-  }
-
-  async incrementVote(id: string, choice: 'sim' | 'nao' | 'abstencao'): Promise<AgendaItem> {
-    const item = await this.findOne(id);
-    if (choice === 'sim') item.votesYes = (item.votesYes ?? 0) + 1;
-    else if (choice === 'nao') item.votesNo = (item.votesNo ?? 0) + 1;
-    else item.votesAbstain = (item.votesAbstain ?? 0) + 1;
-    return this.agendaRepo.save(item);
-  }
 }

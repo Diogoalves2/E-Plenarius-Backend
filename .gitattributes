@@ -1,0 +1,6 @@
+# Arquivos executados no Linux da VPS: sempre LF
+*.sh text eol=lf
+*.yml text eol=lf
+*.conf text eol=lf
+Dockerfile text eol=lf
+.env.example text eol=lf

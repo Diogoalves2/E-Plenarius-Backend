@@ -1,0 +1,14 @@
+import { Global, Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { Session } from '../../sessions/entities/session.entity';
+import { AgendaItem } from '../../agenda/entities/agenda-item.entity';
+import { ChamberAccessService } from './chamber-access.service';
+import { SessionChamberGuard } from './session-chamber.guard';
+
+@Global()
+@Module({
+  imports: [TypeOrmModule.forFeature([Session, AgendaItem])],
+  providers: [ChamberAccessService, SessionChamberGuard],
+  exports: [ChamberAccessService, SessionChamberGuard],
+})
+export class AccessModule {}

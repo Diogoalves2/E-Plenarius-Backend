@@ -1,6 +1,6 @@
 import {
   Controller, Post, Get, Delete, Param, Body,
-  UseGuards, HttpCode, Patch,
+  UseGuards, HttpCode, Patch, ParseEnumPipe,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { ExpedienteService } from './expediente.service';
@@ -12,10 +12,11 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Public } from '../common/decorators/public.decorator';
+import { SessionChamberGuard } from '../common/access/session-chamber.guard';
 
 @ApiTags('expediente')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, SessionChamberGuard)
 @Controller('expediente/sessions')
 export class ExpedienteController {
   constructor(private readonly service: ExpedienteService) {}
@@ -36,7 +37,7 @@ export class ExpedienteController {
   @ApiOperation({ summary: 'Presidente abre inscrições do tipo (grande|pequeno)' })
   abrirInscricoes(
     @Param('sessionId') sessionId: string,
-    @Param('tipo') tipo: 'grande' | 'pequeno',
+    @Param('tipo', new ParseEnumPipe(['grande', 'pequeno'])) tipo: 'grande' | 'pequeno',
   ) {
     return this.service.abrirInscricoes(sessionId, tipo);
   }
@@ -48,7 +49,7 @@ export class ExpedienteController {
   @ApiOperation({ summary: 'Presidente encerra inscrições do tipo (grande|pequeno)' })
   encerrarInscricoes(
     @Param('sessionId') sessionId: string,
-    @Param('tipo') tipo: 'grande' | 'pequeno',
+    @Param('tipo', new ParseEnumPipe(['grande', 'pequeno'])) tipo: 'grande' | 'pequeno',
   ) {
     return this.service.encerrarInscricoes(sessionId, tipo);
   }
@@ -73,7 +74,7 @@ export class ExpedienteController {
   @ApiOperation({ summary: 'Vereador cancela inscrição' })
   cancelar(
     @Param('sessionId') sessionId: string,
-    @Param('tipo') tipo: 'grande' | 'pequeno',
+    @Param('tipo', new ParseEnumPipe(['grande', 'pequeno'])) tipo: 'grande' | 'pequeno',
     @CurrentUser() user: any,
   ) {
     return this.service.cancelarInscricao(sessionId, user.id, tipo);
@@ -168,15 +169,7 @@ export class ExpedienteController {
     @Param('sessionId') sessionId: string,
     @CurrentUser() user: any,
   ) {
-    const vereador = {
-      id: user.id,
-      name: user.name,
-      avatarUrl: user.avatarUrl ?? null,
-      party: user.party ?? null,
-      initials: user.initials ?? null,
-      title: user.title ?? null,
-    };
-    return this.service.solicitarAparte(sessionId, user.id, vereador);
+    return this.service.solicitarAparte(sessionId, user.id);
   }
 
   @Delete(':sessionId/aparte/cancelar')

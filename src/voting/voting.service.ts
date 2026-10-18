@@ -1,30 +1,84 @@
 import {
-  Injectable, BadRequestException, ConflictException,
+  Injectable, BadRequestException, ConflictException, ForbiddenException, NotFoundException, Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { createHash } from 'crypto';
-import { Vote } from './entities/vote.entity';
+import { DataSource, EntityManager, Repository } from 'typeorm';
+import { Vote, VoteChoice } from './entities/vote.entity';
 import { User } from '../users/entities/user.entity';
+import { AgendaItem } from '../agenda/entities/agenda-item.entity';
+import { Session } from '../sessions/entities/session.entity';
+import { SessionPresence } from '../sessions/entities/session-presence.entity';
 import { AgendaService } from '../agenda/agenda.service';
 import { AuditService } from '../audit/audit.service';
 import { CastVoteDto } from './dto/cast-vote.dto';
 import { VotingGateway } from './voting.gateway';
+import { canonicalJson, GENESIS_HASH, maskSecretCounts, sha256 } from '../common/integrity';
 
+const VOTER_ROLES = ['vereador', 'presidente'];
+
+/**
+ * Integridade da votação:
+ * - cada voto entra numa cadeia de hash por item (seq, prevHash, chainHash), sob lock do item;
+ * - votação secreta grava só "quem votou" — a escolha individual vai apenas para o placar agregado;
+ * - ao encerrar, resultHash = hash(placar + último elo da cadeia), registrado na auditoria e na ata;
+ * - o banco bloqueia UPDATE/DELETE em votes e audit_logs (DatabaseIntegrityService).
+ */
 @Injectable()
 export class VotingService {
+  private readonly logger = new Logger(VotingService.name);
+
   constructor(
     @InjectRepository(Vote)
     private readonly votesRepo: Repository<Vote>,
     @InjectRepository(User)
     private readonly usersRepo: Repository<User>,
+    private readonly dataSource: DataSource,
     private readonly agendaService: AgendaService,
     private readonly auditService: AuditService,
     private readonly gateway: VotingGateway,
   ) {}
 
+  static voteChainHash(v: { prevHash: string; seq: number; agendaItemId: string; userId: string; choice: string }) {
+    return sha256(canonicalJson({
+      prevHash: v.prevHash, seq: v.seq, agendaItemId: v.agendaItemId, userId: v.userId, choice: v.choice,
+    }));
+  }
+
+  static resultHash(item: AgendaItem, lastChainHash: string, totalVotes: number) {
+    return sha256(canonicalJson({
+      agendaItemId: item.id,
+      sessionId: item.sessionId,
+      chamberId: item.chamberId,
+      votingType: item.votingType,
+      status: item.status,
+      votesYes: item.votesYes ?? 0,
+      votesNo: item.votesNo ?? 0,
+      votesAbstain: item.votesAbstain ?? 0,
+      totalVotes,
+      lastChainHash,
+    }));
+  }
+
+  private async lockItem(m: EntityManager, id: string): Promise<AgendaItem> {
+    const item = await m.getRepository(AgendaItem)
+      .createQueryBuilder('i')
+      .setLock('pessimistic_write')
+      .where('i.id = :id', { id })
+      .getOne();
+    if (!item) throw new NotFoundException('Item da pauta não encontrado');
+    return item;
+  }
+
+  private async assertSessionRunning(m: EntityManager, sessionId: string) {
+    const session = await m.getRepository(Session).findOne({ where: { id: sessionId }, select: ['id', 'status'] });
+    if (session?.status !== 'em_andamento') throw new BadRequestException('A sessão não está em andamento');
+  }
+
   async openVoting(agendaItemId: string, user: any) {
+    const current = await this.agendaService.findOne(agendaItemId);
+    await this.assertSessionRunning(this.dataSource.manager, current.sessionId);
     const item = await this.agendaService.openVoting(agendaItemId);
+
     await this.auditService.log({
       chamberId: item.chamberId,
       sessionId: item.sessionId,
@@ -32,95 +86,160 @@ export class VotingService {
       action: 'voting:opened',
       targetType: 'agenda_item',
       targetId: item.id,
-      detail: { title: item.title, number: item.number },
-      ipAddress: user.ip,
+      detail: { title: item.title, number: item.number, votingType: item.votingType },
     });
-    this.gateway.emitToSession(item.sessionId, 'voting:opened', {
-      agendaItem: item,
-      openedBy: user.id,
-    });
-    return item;
+    const pub = maskSecretCounts(item);
+    this.gateway.emitToSession(item.sessionId, 'voting:opened', { agendaItem: pub, openedBy: user.id });
+    return pub;
   }
 
   async closeVoting(agendaItemId: string, user: any) {
-    const item = await this.agendaService.closeVoting(agendaItemId);
-    const votes = await this.getVotesByItem(agendaItemId);
-    await this.auditService.log({
-      chamberId: item.chamberId,
-      sessionId: item.sessionId,
-      userId: user.id,
-      action: 'voting:closed',
-      targetType: 'agenda_item',
-      targetId: item.id,
-      detail: {
-        result: item.status,
-        votesYes: item.votesYes,
-        votesNo: item.votesNo,
-        votesAbstain: item.votesAbstain,
-      },
-      ipAddress: user.ip,
+    const { item, votes, integrityOk } = await this.dataSource.transaction(async m => {
+      const item = await this.lockItem(m, agendaItemId);
+      if (item.status !== 'em_votacao')
+        throw new BadRequestException('Nenhuma votação em andamento para este item');
+
+      const votes = await m.getRepository(Vote).find({
+        where: { agendaItemId },
+        relations: ['user'],
+        order: { seq: 'ASC' },
+      });
+      const lastChainHash = votes.length ? votes[votes.length - 1].chainHash ?? GENESIS_HASH : GENESIS_HASH;
+      const counted = (item.votesYes ?? 0) + (item.votesNo ?? 0) + (item.votesAbstain ?? 0);
+      const integrityOk = counted === votes.length;
+      if (!integrityOk) {
+        this.logger.error(`[integridade] item=${item.id} placar=${counted} votos=${votes.length}`);
+      }
+
+      item.status = (item.votesYes ?? 0) > (item.votesNo ?? 0) ? 'aprovado' : 'rejeitado';
+      item.votingClosedAt = new Date();
+      item.resultHash = VotingService.resultHash(item, lastChainHash, votes.length);
+      await m.getRepository(AgendaItem).save(item);
+
+      await this.auditService.log({
+        chamberId: item.chamberId,
+        sessionId: item.sessionId,
+        userId: user.id,
+        action: 'voting:closed',
+        targetType: 'agenda_item',
+        targetId: item.id,
+        detail: {
+          result: item.status,
+          votingType: item.votingType,
+          votesYes: item.votesYes ?? 0,
+          votesNo: item.votesNo ?? 0,
+          votesAbstain: item.votesAbstain ?? 0,
+          totalVotes: votes.length,
+          resultHash: item.resultHash,
+          integrityOk,
+        },
+      }, m);
+      return { item, votes, integrityOk };
     });
+
+    const full = await this.agendaService.findOne(item.id);
+    const pub = maskSecretCounts(full);
     this.gateway.emitToSession(item.sessionId, 'voting:closed', {
-      agendaItem: item,
+      agendaItem: pub,
       result: item.status,
-      counts: {
-        sim: item.votesYes,
-        nao: item.votesNo,
-        abstencao: item.votesAbstain,
-      },
-      votes: item.votingType === 'aberta' ? votes : [],
+      counts: { sim: item.votesYes ?? 0, nao: item.votesNo ?? 0, abstencao: item.votesAbstain ?? 0 },
+      totalVotes: votes.length,
+      resultHash: item.resultHash,
+      integrityOk,
+      votes: item.votingType === 'aberta' ? this.toPublicVotes(votes, item.votingType) : [],
     });
-    return item;
+    return pub;
   }
 
   async castVote(dto: CastVoteDto, user: any, ipAddress: string) {
-    const item = await this.agendaService.findOne(dto.agendaItemId);
+    if (!VOTER_ROLES.includes(user.role)) throw new ForbiddenException('Seu perfil não vota');
 
-    if (item.status !== 'em_votacao')
-      throw new BadRequestException('Votação não está aberta para este item');
+    let result: { vote: Vote; item: AgendaItem };
+    try {
+      result = await this.dataSource.transaction(async m => {
+        // Lock do item serializa os votos dele: cadeia de hash e placar sem condição de corrida.
+        const item = await this.lockItem(m, dto.agendaItemId);
+        if (item.chamberId !== user.chamberId)
+          throw new ForbiddenException('Você não pertence à câmara deste item');
+        if (item.status !== 'em_votacao')
+          throw new BadRequestException('Votação não está aberta para este item');
+        await this.assertSessionRunning(m, item.sessionId);
 
-    const existing = await this.votesRepo.findOne({
-      where: { agendaItemId: dto.agendaItemId, userId: user.id },
-    });
-    if (existing) throw new ConflictException('Você já votou neste item');
+        const presence = await m.getRepository(SessionPresence).findOne({
+          where: { sessionId: item.sessionId, userId: user.id },
+          select: ['id'],
+          loadEagerRelations: false,
+        });
+        if (!presence) throw new ForbiddenException('Confirme sua presença na sessão antes de votar');
 
-    const hash = createHash('sha256')
-      .update(`${user.id}:${dto.agendaItemId}:${dto.choice}:${Date.now()}`)
-      .digest('hex');
+        const votes = m.getRepository(Vote);
+        const existing = await votes.findOne({
+          where: { agendaItemId: dto.agendaItemId, userId: user.id },
+          select: ['id'],
+          loadEagerRelations: false,
+        });
+        if (existing) throw new ConflictException('Você já votou neste item');
 
-    const vote = await this.votesRepo.save(
-      this.votesRepo.create({
-        sessionId: item.sessionId,
-        agendaItemId: dto.agendaItemId,
-        userId: user.id,
-        chamberId: item.chamberId,
-        choice: dto.choice,
-        hash: `0x${hash.slice(0, 12)}`,
-        ipAddress,
-        deviceInfo: dto.deviceInfo,
-      }),
-    );
+        const last = await votes.findOne({
+          where: { agendaItemId: dto.agendaItemId },
+          select: ['id', 'seq', 'chainHash'],
+          order: { seq: 'DESC' },
+          loadEagerRelations: false,
+        });
+        const seq = (last?.seq ?? 0) + 1;
+        const prevHash = last?.chainHash ?? GENESIS_HASH;
+        const storedChoice: VoteChoice | 'secreta' = item.votingType === 'aberta' ? dto.choice : 'secreta';
+        const chainHash = VotingService.voteChainHash({
+          prevHash, seq, agendaItemId: item.id, userId: user.id, choice: storedChoice,
+        });
 
-    const updatedItem = await this.agendaService.incrementVote(dto.agendaItemId, dto.choice);
+        const vote = await votes.save(votes.create({
+          sessionId: item.sessionId,
+          agendaItemId: item.id,
+          userId: user.id,
+          chamberId: item.chamberId,
+          choice: storedChoice,
+          hash: `0x${chainHash.slice(0, 16)}`,
+          seq,
+          prevHash,
+          chainHash,
+          ipAddress,
+          deviceInfo: dto.deviceInfo,
+        }));
 
+        const column = dto.choice === 'sim' ? 'votesYes' : dto.choice === 'nao' ? 'votesNo' : 'votesAbstain';
+        await m.createQueryBuilder()
+          .update(AgendaItem)
+          .set({ [column]: () => `COALESCE("${column}", 0) + 1` })
+          .where('id = :id', { id: item.id })
+          .execute();
+
+        await this.auditService.log({
+          chamberId: item.chamberId,
+          sessionId: item.sessionId,
+          userId: user.id,
+          action: 'vote:cast',
+          targetType: 'agenda_item',
+          targetId: item.id,
+          detail: { choice: storedChoice, receipt: vote.hash, seq },
+          ipAddress,
+        }, m);
+
+        const updated = await m.getRepository(AgendaItem).findOne({ where: { id: item.id } });
+        return { vote, item: updated! };
+      });
+    } catch (err: any) {
+      // Duplo clique / dois devices ao mesmo tempo: a constraint UNIQUE(agendaItemId,userId) segura.
+      if (err?.code === '23505') throw new ConflictException('Você já votou neste item');
+      throw err;
+    }
+
+    const { vote, item } = result;
     const fullUser = await this.usersRepo.findOne({
       where: { id: user.id },
       select: ['id', 'name', 'avatarUrl', 'party', 'initials'],
     });
-
-    await this.auditService.log({
-      chamberId: item.chamberId,
-      sessionId: item.sessionId,
-      userId: user.id,
-      action: 'vote:cast',
-      targetType: 'agenda_item',
-      targetId: item.id,
-      detail: {
-        choice: item.votingType === 'aberta' ? dto.choice : 'secreta',
-        hash: vote.hash,
-      },
-      ipAddress,
-    });
+    const pub = maskSecretCounts(item);
 
     this.gateway.emitToSession(item.sessionId, 'vote:cast', {
       userId: user.id,
@@ -128,29 +247,97 @@ export class VotingService {
       userAvatarUrl: fullUser?.avatarUrl ?? null,
       userParty: fullUser?.party ?? null,
       userInitials: fullUser?.initials ?? null,
-      agendaItemId: dto.agendaItemId,
-      choice: item.votingType === 'aberta' ? dto.choice : 'secreta',
+      agendaItemId: item.id,
+      choice: vote.choice,
       hash: vote.hash,
-      counts: {
-        sim: updatedItem.votesYes,
-        nao: updatedItem.votesNo,
-        abstencao: updatedItem.votesAbstain,
-      },
+      // Secreta em andamento: placar parcial oculto (null) — só o total.
+      counts: pub.countsHidden
+        ? null
+        : { sim: item.votesYes ?? 0, nao: item.votesNo ?? 0, abstencao: item.votesAbstain ?? 0 },
+      totalVotes: pub.votesTotal,
     });
 
     return { hash: vote.hash, message: 'Voto registrado com sucesso' };
+  }
+
+  /** Recalcula a cadeia de votos do item e confere placar/resultHash. */
+  async verifyItem(agendaItemId: string) {
+    const item = await this.agendaService.findOne(agendaItemId);
+    const votes = await this.votesRepo.find({ where: { agendaItemId }, order: { seq: 'ASC' } });
+    const problems: string[] = [];
+
+    let prev = GENESIS_HASH;
+    votes.forEach((v, i) => {
+      if (v.seq !== i + 1) problems.push(`voto ${v.id}: sequência ${v.seq}, esperado ${i + 1}`);
+      if (v.prevHash !== prev) problems.push(`voto ${v.id}: encadeamento quebrado`);
+      const h = VotingService.voteChainHash({
+        prevHash: v.prevHash ?? '', seq: v.seq ?? 0, agendaItemId: v.agendaItemId, userId: v.userId, choice: v.choice,
+      });
+      if (h !== v.chainHash) problems.push(`voto ${v.id}: conteúdo alterado`);
+      prev = v.chainHash ?? '';
+    });
+
+    const counted = (item.votesYes ?? 0) + (item.votesNo ?? 0) + (item.votesAbstain ?? 0);
+    if (counted !== votes.length) problems.push(`placar soma ${counted}, mas há ${votes.length} votos registrados`);
+
+    if (item.votingType === 'aberta') {
+      const by = (c: string) => votes.filter(v => v.choice === c).length;
+      if (by('sim') !== (item.votesYes ?? 0) || by('nao') !== (item.votesNo ?? 0) || by('abstencao') !== (item.votesAbstain ?? 0)) {
+        problems.push('placar diverge dos votos nominais');
+      }
+    }
+
+    if (item.status === 'aprovado' || item.status === 'rejeitado') {
+      const expected = VotingService.resultHash(item, votes.length ? prev : GENESIS_HASH, votes.length);
+      if (!item.resultHash) problems.push('item encerrado sem resultHash');
+      else if (expected !== item.resultHash) problems.push('resultHash não confere com placar/cadeia atuais');
+    }
+
+    return {
+      valid: problems.length === 0,
+      agendaItemId,
+      totalVotes: votes.length,
+      resultHash: item.resultHash ?? null,
+      problems,
+    };
   }
 
   getVotesByItem(agendaItemId: string): Promise<Vote[]> {
     return this.votesRepo.find({
       where: { agendaItemId },
       relations: ['user'],
-      order: { createdAt: 'ASC' },
+      order: { seq: 'ASC', createdAt: 'ASC' },
     });
   }
 
+  /** Lista para clientes: mesma câmara apenas; em votação secreta mostra quem votou, nunca a escolha. */
+  async getVotesForViewer(agendaItemId: string, viewer: any) {
+    const item = await this.agendaService.findOne(agendaItemId);
+    if (viewer.role !== 'superadmin' && item.chamberId !== viewer.chamberId)
+      throw new ForbiddenException('Sem acesso a esta votação');
+    return this.toPublicVotes(await this.getVotesByItem(agendaItemId), item.votingType);
+  }
+
+  private toPublicVotes(votes: Vote[], votingType: string) {
+    return votes.map(v => ({
+      id: v.id,
+      userId: v.userId,
+      agendaItemId: v.agendaItemId,
+      choice: votingType === 'aberta' ? v.choice : 'secreta',
+      hash: v.hash,
+      createdAt: v.createdAt,
+      user: v.user && {
+        id: v.user.id,
+        name: v.user.name,
+        avatarUrl: v.user.avatarUrl,
+        party: v.user.party,
+        initials: v.user.initials,
+      },
+    }));
+  }
+
   async hasVoted(agendaItemId: string, userId: string): Promise<boolean> {
-    const vote = await this.votesRepo.findOne({ where: { agendaItemId, userId } });
+    const vote = await this.votesRepo.findOne({ where: { agendaItemId, userId }, select: ['id'], loadEagerRelations: false });
     return !!vote;
   }
 }

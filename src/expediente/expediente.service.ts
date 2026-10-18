@@ -327,7 +327,7 @@ export class ExpedienteService {
 
   // ─── Apartes ───────────────────────────────────────────────────────────────
 
-  solicitarAparte(sessionId: string, userId: string, vereador: VereadorInfo) {
+  async solicitarAparte(sessionId: string, userId: string) {
     const state = this.timers.get(sessionId);
     if (!state) throw new BadRequestException('Nenhum expediente ativo');
     if (state.aparteAtivo) throw new BadRequestException('Já há um aparte em andamento');
@@ -336,6 +336,21 @@ export class ExpedienteService {
     if (jaExiste) throw new BadRequestException('Já solicitou aparte');
 
     if (state.vereador.id === userId) throw new BadRequestException('O orador não pode solicitar aparte de si mesmo');
+
+    // JWT só carrega id/email/role/chamberId — dados de exibição vêm do banco.
+    const u = await this.usersRepo.findOne({
+      where: { id: userId },
+      select: ['id', 'name', 'avatarUrl', 'party', 'initials', 'title'],
+    });
+    if (!u) throw new NotFoundException('Usuário não encontrado');
+    const vereador: VereadorInfo = {
+      id: u.id,
+      name: u.name,
+      avatarUrl: u.avatarUrl ?? null,
+      party: u.party ?? null,
+      initials: u.initials ?? null,
+      title: u.title ?? null,
+    };
 
     state.solicitacoes.push({ userId, vereador, solicitadoEm: new Date() });
 

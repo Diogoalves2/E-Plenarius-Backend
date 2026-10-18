@@ -2,13 +2,17 @@ import {
   Injectable,
   UnauthorizedException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   Logger,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
-import { randomUUID } from 'crypto';
+import { randomBytes, randomUUID } from 'crypto';
+import { sha256 } from '../common/integrity';
+import { DevicesService } from '../devices/devices.service';
 import { UsersService } from '../users/users.service';
 import { RefreshToken } from './entities/refresh-token.entity';
 import { Session } from '../sessions/entities/session.entity';
@@ -19,6 +23,33 @@ import { JwtPayload } from './strategies/jwt.strategy';
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
 
+  /** Falhas de login por usuário (em memória — backend roda em instância única). */
+  private readonly failures = new Map<string, { count: number; lockedUntil: number }>();
+  private static readonly MAX_FAILURES = 5;
+  private static readonly LOCK_MS = 5 * 60 * 1000;
+
+  private assertNotLocked(key: string) {
+    const entry = this.failures.get(key);
+    if (entry && entry.lockedUntil > Date.now()) {
+      const min = Math.ceil((entry.lockedUntil - Date.now()) / 60000);
+      throw new HttpException(
+        `Muitas tentativas incorretas. Tente novamente em ${min} min.`,
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+  }
+
+  private registerFailure(key: string) {
+    const entry = this.failures.get(key) ?? { count: 0, lockedUntil: 0 };
+    if (entry.lockedUntil && entry.lockedUntil <= Date.now()) entry.count = 0;
+    entry.count += 1;
+    if (entry.count >= AuthService.MAX_FAILURES) {
+      entry.lockedUntil = Date.now() + AuthService.LOCK_MS;
+      this.logger.warn(`[auth] bloqueado ${key} por ${AuthService.LOCK_MS / 60000} min`);
+    }
+    this.failures.set(key, entry);
+  }
+
   constructor(
     private readonly usersService: UsersService,
     private readonly jwtService: JwtService,
@@ -27,6 +58,7 @@ export class AuthService {
     private readonly refreshTokenRepo: Repository<RefreshToken>,
     @InjectRepository(Session)
     private readonly sessionRepo: Repository<Session>,
+    private readonly devices: DevicesService,
   ) {}
 
   async login(dto: LoginDto) {
@@ -43,6 +75,7 @@ export class AuthService {
       throw new UnauthorizedException('Credenciais inválidas');
     }
 
+    this.assertNotLocked(`pwd:${user.id}`);
     let valid: boolean;
     try {
       valid = await user.validatePassword(dto.password);
@@ -52,8 +85,10 @@ export class AuthService {
     }
     if (!valid) {
       this.logger.warn(`[login] senha invalida user=${user.id}`);
+      this.registerFailure(`pwd:${user.id}`);
       throw new UnauthorizedException('Credenciais inválidas');
     }
+    this.failures.delete(`pwd:${user.id}`);
 
     if (!user.isActive) throw new ForbiddenException('Conta desativada');
 
@@ -96,8 +131,33 @@ export class AuthService {
       throw new UnauthorizedException('PIN não cadastrado. Solicite ao presidente.');
     }
 
+    this.assertNotLocked(`pin:${user.id}`);
+
+    // Tablet precisa estar cadastrado e aprovado pelo presidente da câmara.
+    const device = await this.devices.findByKey(dto.deviceKey);
+    if (device && device.chamberId !== user.chamberId) {
+      throw new ForbiddenException('Este tablet está registrado em outra câmara.');
+    }
+    if (device?.status === 'revogado') {
+      throw new ForbiddenException(`Este tablet (código ${device.code}) foi bloqueado. Procure o presidente da câmara.`);
+    }
+    if (device?.status === 'pendente') {
+      throw new ForbiddenException(this.pendingMessage(device.code));
+    }
+
     const valid = await user.validatePin(dto.pin);
-    if (!valid) throw new UnauthorizedException('PIN incorreto');
+    if (!valid) {
+      this.registerFailure(`pin:${user.id}`);
+      throw new UnauthorizedException('PIN incorreto');
+    }
+    this.failures.delete(`pin:${user.id}`);
+
+    // Tablet novo + PIN correto: registra como pendente. Só entra depois da aprovação.
+    if (!device) {
+      const created = await this.devices.createPending(user.chamberId as string, dto.deviceKey, dto.deviceName, user.id);
+      this.logger.warn(`[mobile-login] tablet novo ${created.code} aguardando aprovação (user=${user.id})`);
+      throw new ForbiddenException(this.pendingMessage(created.code));
+    }
 
     // Regra: vereadores só podem entrar se houver sessão em andamento na câmara.
     // Presidente entra sempre (precisa abrir/gerenciar sessão).
@@ -110,32 +170,55 @@ export class AuthService {
       }
     }
 
-    // Single-device session: gera novo deviceId. JwtStrategy invalida tokens
-    // mobile antigos no próximo request (payload.mobileDevice != user.mobileDeviceId).
-    // NÃO revogamos refresh tokens aqui para não deslogar sessão web do mesmo user.
-    const deviceId = randomUUID();
-    user.mobileDeviceId = deviceId;
+    // Single-device session: novo mobileDevice invalida tokens mobile antigos no próximo
+    // request (JwtStrategy compara com users.mobileDeviceId). Sessão web não é afetada.
+    const mobileDevice = randomUUID();
+    user.mobileDeviceId = mobileDevice;
     user.lastLoginAt = new Date();
     await this.usersService.saveRaw(user);
+    await this.devices.touch(device.id, user.id);
 
-    return this.generateTokens(user, deviceId);
+    return this.generateTokens(user, { mobileDevice, deviceId: device.id });
+  }
+
+  private pendingMessage(code: string) {
+    return `Tablet não autorizado (código ${code}). Peça ao presidente para aprovar este código em Dispositivos, no painel web.`;
   }
 
   async refresh(dto: RefreshTokenDto) {
     const stored = await this.refreshTokenRepo.findOne({
-      where: { token: dto.refreshToken, revoked: false },
+      where: { token: sha256(dto.refreshToken) },
       relations: ['user'],
     });
+    if (!stored) throw new UnauthorizedException('Refresh token inválido ou expirado');
 
-    if (!stored || stored.expiresAt < new Date()) {
+    // Token já usado sendo reapresentado = provável roubo: revoga tudo do usuário.
+    if (stored.revoked) {
+      this.logger.warn(`[refresh] reuso de token revogado user=${stored.userId} — revogando todos`);
+      await this.refreshTokenRepo.update({ userId: stored.userId, revoked: false }, { revoked: true });
+      throw new UnauthorizedException('Refresh token inválido ou expirado');
+    }
+    if (stored.expiresAt < new Date() || !stored.user?.isActive) {
       throw new UnauthorizedException('Refresh token inválido ou expirado');
     }
 
-    // Rotate: revoke old, issue new
+    if (stored.mobileDevice) {
+      if (stored.user.mobileDeviceId !== stored.mobileDevice) {
+        throw new UnauthorizedException('Sessão encerrada: este usuário fez login em outro dispositivo.');
+      }
+      if (stored.deviceId && !(await this.devices.isApproved(stored.deviceId))) {
+        throw new UnauthorizedException('Sessão encerrada: tablet bloqueado pelo presidente.');
+      }
+    }
+
+    // Rotate: revoke old, issue new (mantendo o vínculo com o tablet)
     stored.revoked = true;
     await this.refreshTokenRepo.save(stored);
 
-    return this.generateTokens(stored.user);
+    return this.generateTokens(stored.user, {
+      mobileDevice: stored.mobileDevice ?? undefined,
+      deviceId: stored.deviceId ?? undefined,
+    });
   }
 
   async logout(userId: string) {
@@ -143,27 +226,35 @@ export class AuthService {
     return { message: 'Logout realizado com sucesso' };
   }
 
-  private async generateTokens(user: any, mobileDevice?: string) {
+  private refreshTtlMs(): number {
+    const raw = String(this.config.get('JWT_REFRESH_EXPIRES_IN', '7d'));
+    const m = /^(\d+)\s*([dhm])$/.exec(raw);
+    if (!m) return 7 * 24 * 3600 * 1000;
+    const unit = { d: 24 * 3600 * 1000, h: 3600 * 1000, m: 60 * 1000 }[m[2] as 'd' | 'h' | 'm'];
+    return Number(m[1]) * unit;
+  }
+
+  private async generateTokens(user: any, mobile?: { mobileDevice?: string; deviceId?: string }) {
     const payload: JwtPayload = {
       sub: user.id,
       email: user.email,
       role: user.role,
       chamberId: user.chamberId,
-      ...(mobileDevice ? { mobileDevice } : {}),
+      ...(mobile?.mobileDevice ? { mobileDevice: mobile.mobileDevice } : {}),
+      ...(mobile?.deviceId ? { device: mobile.deviceId } : {}),
     };
 
     const accessToken = this.jwtService.sign(payload);
 
-    const refreshExpiresIn = this.config.get('JWT_REFRESH_EXPIRES_IN', '7d');
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7);
-
-    const refreshToken = randomUUID();
+    const expiresAt = new Date(Date.now() + this.refreshTtlMs());
+    const refreshToken = randomBytes(32).toString('base64url');
     await this.refreshTokenRepo.save(
       this.refreshTokenRepo.create({
         userId: user.id,
-        token: refreshToken,
+        token: sha256(refreshToken),
         expiresAt,
+        mobileDevice: mobile?.mobileDevice ?? null,
+        deviceId: mobile?.deviceId ?? null,
       }),
     );
 

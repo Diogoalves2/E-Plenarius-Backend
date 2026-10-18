@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { RegimentoInterno } from './entities/regimento.entity';
@@ -22,6 +22,12 @@ export class RegimentoService {
     await this.repo.update({ chamberId, isActive: true }, { isActive: false });
     const r = this.repo.create({ ...dto, chamberId, uploadedById: userId, isActive: true });
     return this.repo.save(r);
+  }
+
+  async findById(id: string): Promise<RegimentoInterno> {
+    const r = await this.repo.findOne({ where: { id } });
+    if (!r) throw new NotFoundException('Regimento não encontrado');
+    return r;
   }
 
   findActive(chamberId: string): Promise<RegimentoInterno | null> {

@@ -1,5 +1,5 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsString, MinLength } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsOptional, IsString, IsUUID, Matches, MaxLength, MinLength } from 'class-validator';
 
 export class LoginDto {
   @ApiProperty({ example: 'pedro' })
@@ -21,11 +21,22 @@ export class RefreshTokenDto {
 
 export class MobileLoginDto {
   @ApiProperty({ example: 'uuid-do-vereador' })
-  @IsString()
+  @IsUUID()
   userId: string;
 
-  @ApiProperty({ example: '1234', description: 'PIN de 4 dígitos' })
+  @ApiProperty({ example: '123456', description: 'PIN numérico (6 dígitos; 4 aceito por compatibilidade)' })
   @IsString()
-  @MinLength(4)
+  @Matches(/^\d{4,6}$/, { message: 'PIN inválido' })
   pin: string;
+
+  @ApiProperty({ description: 'Chave secreta gerada pelo tablet na primeira execução' })
+  @IsString()
+  @Matches(/^[A-Za-z0-9_-]{32,128}$/, { message: 'Atualize o aplicativo para continuar' })
+  deviceKey: string;
+
+  @ApiPropertyOptional({ example: 'Samsung SM-X200' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  deviceName?: string;
 }

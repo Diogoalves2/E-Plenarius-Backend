@@ -20,8 +20,16 @@ export class RefreshToken {
   @JoinColumn({ name: 'userId' })
   user: User;
 
+  /** sha256 do refresh token — o valor em si só existe no cliente. */
   @Column({ unique: true })
   token: string;
+
+  /** Login do app: id de sessão single-device (users.mobileDeviceId) e tablet usado. */
+  @Column({ nullable: true })
+  mobileDevice: string | null;
+
+  @Column({ nullable: true })
+  deviceId: string | null;
 
   @Column()
   expiresAt: Date;

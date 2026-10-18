@@ -9,10 +9,12 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 import { RefreshToken } from './entities/refresh-token.entity';
 import { Session } from '../sessions/entities/session.entity';
 import { UsersModule } from '../users/users.module';
+import { DevicesModule } from '../devices/devices.module';
 
 @Module({
   imports: [
     UsersModule,
+    DevicesModule,
     PassportModule,
     TypeOrmModule.forFeature([RefreshToken, Session]),
     JwtModule.registerAsync({
