@@ -1,5 +1,5 @@
 import {
-  Injectable, BadRequestException, ConflictException, ForbiddenException, NotFoundException, Logger,
+  Injectable, BadRequestException, ConflictException, ForbiddenException, NotFoundException, Logger, UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
@@ -13,6 +13,9 @@ import { AuditService } from '../audit/audit.service';
 import { CastVoteDto } from './dto/cast-vote.dto';
 import { VotingGateway } from './voting.gateway';
 import { canonicalJson, GENESIS_HASH, maskSecretCounts, sha256 } from '../common/integrity';
+import { decide, presidentMayVote } from '../common/legislative';
+import { ChambersService } from '../chambers/chambers.service';
+import { LoginAttemptsService } from '../common/access/login-attempts.service';
 
 const VOTER_ROLES = ['vereador', 'presidente'];
 
@@ -36,7 +39,19 @@ export class VotingService {
     private readonly agendaService: AgendaService,
     private readonly auditService: AuditService,
     private readonly gateway: VotingGateway,
+    private readonly chambers: ChambersService,
+    private readonly attempts: LoginAttemptsService,
   ) {}
+
+  /** Vereadores + presidente com presença confirmada na sessão. */
+  async countPresentMembers(sessionId: string): Promise<number> {
+    const [{ n }] = await this.dataSource.query(
+      `SELECT COUNT(*)::int AS n FROM session_presences p JOIN users u ON u.id = p."userId"
+        WHERE p."sessionId" = $1 AND u.role IN ('vereador', 'presidente')`,
+      [sessionId],
+    );
+    return n;
+  }
 
   static voteChainHash(v: { prevHash: string; seq: number; agendaItemId: string; userId: string; choice: string }) {
     return sha256(canonicalJson({
@@ -54,6 +69,8 @@ export class VotingService {
       votesYes: item.votesYes ?? 0,
       votesNo: item.votesNo ?? 0,
       votesAbstain: item.votesAbstain ?? 0,
+      majority: item.majority ?? 'simples',
+      requiredVotes: item.requiredVotes ?? null,
       totalVotes,
       lastChainHash,
     }));
@@ -77,6 +94,14 @@ export class VotingService {
   async openVoting(agendaItemId: string, user: any) {
     const current = await this.agendaService.findOne(agendaItemId);
     await this.assertSessionRunning(this.dataSource.manager, current.sessionId);
+
+    // Quórum: membros (vereadores + presidente) com presença confirmada.
+    const present = await this.countPresentMembers(current.sessionId);
+    if (present < current.quorumMinimum) {
+      throw new BadRequestException(
+        `Quórum insuficiente: ${present} presente(s), mínimo ${current.quorumMinimum} para abrir esta votação.`,
+      );
+    }
     const item = await this.agendaService.openVoting(agendaItemId);
 
     await this.auditService.log({
@@ -86,7 +111,7 @@ export class VotingService {
       action: 'voting:opened',
       targetType: 'agenda_item',
       targetId: item.id,
-      detail: { title: item.title, number: item.number, votingType: item.votingType },
+      detail: { title: item.title, number: item.number, votingType: item.votingType, majority: item.majority, present },
     });
     const pub = maskSecretCounts(item);
     this.gateway.emitToSession(item.sessionId, 'voting:opened', { agendaItem: pub, openedBy: user.id });
@@ -111,7 +136,26 @@ export class VotingService {
         this.logger.error(`[integridade] item=${item.id} placar=${counted} votos=${votes.length}`);
       }
 
-      item.status = (item.votesYes ?? 0) > (item.votesNo ?? 0) ? 'aprovado' : 'rejeitado';
+      const rules = await this.chambers.getRules(item.chamberId);
+      const yes = item.votesYes ?? 0, no = item.votesNo ?? 0, abstain = item.votesAbstain ?? 0;
+      const decision = decide({ majority: item.majority ?? 'simples', yes, no, abstain, seats: rules.seats });
+
+      // Empate em maioria simples: se o regimento reserva o voto do presidente ao desempate,
+      // ele precisa votar antes de encerrar.
+      if (decision.tie && rules.presidentVoteRule !== 'always') {
+        const presidentVoted = votes.some(v => v.user?.role === 'presidente');
+        if (!presidentVoted) {
+          throw new ConflictException({
+            statusCode: 409,
+            code: 'TIE_NEEDS_PRESIDENT',
+            message: `Empate (${yes} a ${no}). Pelo regimento, o presidente deve votar para desempatar antes de encerrar.`,
+          });
+        }
+      }
+
+      item.status = decision.approved ? 'aprovado' : 'rejeitado';
+      item.requiredVotes = decision.required;
+      item.resultExplanation = decision.explanation;
       item.votingClosedAt = new Date();
       item.resultHash = VotingService.resultHash(item, lastChainHash, votes.length);
       await m.getRepository(AgendaItem).save(item);
@@ -130,6 +174,10 @@ export class VotingService {
           votesNo: item.votesNo ?? 0,
           votesAbstain: item.votesAbstain ?? 0,
           totalVotes: votes.length,
+          majority: item.majority,
+          requiredVotes: item.requiredVotes,
+          seats: rules.seats,
+          explanation: item.resultExplanation,
           resultHash: item.resultHash,
           integrityOk,
         },
@@ -153,6 +201,22 @@ export class VotingService {
 
   async castVote(dto: CastVoteDto, user: any, ipAddress: string) {
     if (!VOTER_ROLES.includes(user.role)) throw new ForbiddenException('Seu perfil não vota');
+    const rules = await this.chambers.getRules(user.chamberId);
+
+    // Confirmação do voto com o PIN do vereador (tablet esquecido aberto não vota sozinho).
+    if (rules.requirePinToVote) {
+      if (!dto.pin) {
+        throw new BadRequestException({ statusCode: 400, code: 'PIN_REQUIRED', message: 'Confirme o voto com seu PIN.' });
+      }
+      const key = `pin:${user.id}`;
+      this.attempts.assertNotLocked(key);
+      const u = await this.usersRepo.createQueryBuilder('u').addSelect('u.pinHash').where('u.id = :id', { id: user.id }).getOne();
+      if (!u || !(await u.validatePin(dto.pin))) {
+        this.attempts.registerFailure(key);
+        throw new UnauthorizedException({ statusCode: 401, code: 'PIN_INVALID', message: 'PIN incorreto.' });
+      }
+      this.attempts.clear(key);
+    }
 
     let result: { vote: Vote; item: AgendaItem };
     try {
@@ -171,6 +235,13 @@ export class VotingService {
           loadEagerRelations: false,
         });
         if (!presence) throw new ForbiddenException('Confirme sua presença na sessão antes de votar');
+
+        if (user.role === 'presidente'
+          && !presidentMayVote(rules.presidentVoteRule, item.majority ?? 'simples', item.votesYes ?? 0, item.votesNo ?? 0)) {
+          throw new ForbiddenException(rules.presidentVoteRule === 'tie_only'
+            ? 'Pelo regimento, o presidente só vota em caso de empate.'
+            : 'Pelo regimento, o presidente só vota para desempatar ou em matérias de maioria absoluta/2/3.');
+        }
 
         const votes = m.getRepository(Vote);
         const existing = await votes.findOne({

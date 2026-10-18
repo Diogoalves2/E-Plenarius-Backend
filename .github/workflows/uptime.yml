@@ -1,0 +1,31 @@
+name: Uptime
+
+# Checagem externa a cada 15 min. Se falhar, o GitHub envia e-mail para quem mantém o workflow.
+# Obs.: em repositório público sem commits por 60 dias o GitHub desativa agendamentos.
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: API
+        run: |
+          for i in 1 2 3; do
+            curl -sf -m 15 https://eplenarius.2-25-152-184.sslip.io/api/health && exit 0
+            sleep 20
+          done
+          echo "::error::API fora do ar ou com esquema desatualizado"; exit 1
+      - name: Frontend
+        run: |
+          for i in 1 2 3; do
+            curl -sf -m 15 -o /dev/null https://e-plenarius-frontend.vercel.app/login && exit 0
+            sleep 20
+          done
+          echo "::error::Frontend fora do ar"; exit 1

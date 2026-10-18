@@ -13,9 +13,26 @@ const IMMUTABLE_TABLES = ['votes', 'audit_logs'];
 export class DatabaseIntegrityService implements OnApplicationBootstrap {
   private readonly logger = new Logger(DatabaseIntegrityService.name);
 
+  /** Alterações de estrutura pendentes (tabela/coluna faltando) detectadas no boot. */
+  pendingSchema: string[] = [];
+
   constructor(private readonly dataSource: DataSource) {}
 
   async onApplicationBootstrap() {
+    // Com synchronize desligado (produção), confere se o banco tem tudo o que as entidades usam.
+    // Só conta CREATE TABLE / ADD COLUMN: diferenças cosméticas (defaults, comentários) não bloqueiam.
+    if (!this.dataSource.options.synchronize) {
+      const log = await this.dataSource.driver.createSchemaBuilder().log();
+      this.pendingSchema = log.upQueries
+        .map(q => q.query)
+        .filter(q => /^CREATE TABLE|ADD (COLUMN )?"/i.test(q.trim()) || /ALTER TABLE .* ADD "/i.test(q));
+      if (this.pendingSchema.length) {
+        this.logger.error(`Esquema do banco desatualizado (${this.pendingSchema.length} alteração(ões)). `
+          + 'Rode o deploy com sincronização de schema.');
+        this.pendingSchema.forEach(q => this.logger.error(`  pendente: ${q.slice(0, 160)}`));
+      }
+    }
+
     await this.dataSource.query(`
       CREATE OR REPLACE FUNCTION eplenarius_block_mutation() RETURNS trigger
       LANGUAGE plpgsql AS $$

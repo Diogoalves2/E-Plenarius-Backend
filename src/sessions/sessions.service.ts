@@ -5,6 +5,8 @@ import { Session } from './entities/session.entity';
 import { SessionPresence } from './entities/session-presence.entity';
 import { CreateSessionDto } from './dto/create-session.dto';
 import { VotingGateway } from '../voting/voting.gateway';
+import { AuditService } from '../audit/audit.service';
+import { ChambersService } from '../chambers/chambers.service';
 
 @Injectable()
 export class SessionsService {
@@ -14,6 +16,8 @@ export class SessionsService {
     @InjectRepository(SessionPresence)
     private readonly presenceRepo: Repository<SessionPresence>,
     private readonly gateway: VotingGateway,
+    private readonly audit: AuditService,
+    private readonly chambers: ChambersService,
   ) {}
 
   async create(dto: CreateSessionDto, createdById: string): Promise<Session> {
@@ -56,13 +60,42 @@ export class SessionsService {
     });
   }
 
-  async start(id: string): Promise<Session> {
+  async start(id: string, userId: string): Promise<Session> {
     const session = await this.findOne(id);
     if (session.status !== 'agendada')
       throw new BadRequestException('Apenas sessões agendadas podem ser iniciadas');
+    const { sessionPhases } = await this.chambers.getRules(session.chamberId);
     session.status = 'em_andamento';
     session.startedAt = new Date();
-    return this.sessionsRepo.save(session);
+    session.phase = sessionPhases[0]?.key ?? null;
+    session.phaseStartedAt = session.startedAt;
+    const saved = await this.sessionsRepo.save(session);
+    await this.audit.log({
+      chamberId: session.chamberId, sessionId: id, userId, action: 'session:started',
+      detail: { number: session.number, type: session.type, phase: session.phase },
+    });
+    this.gateway.emitToSession(id, 'session:phase', { sessionId: id, phase: session.phase, at: session.phaseStartedAt });
+    return saved;
+  }
+
+  /** Avança/volta o roteiro da sessão (presidente). */
+  async setPhase(id: string, phase: string, userId: string): Promise<Session> {
+    const session = await this.findOne(id);
+    if (session.status !== 'em_andamento') throw new BadRequestException('Sessão não está em andamento');
+    const { sessionPhases } = await this.chambers.getRules(session.chamberId);
+    const def = sessionPhases.find(p => p.key === phase);
+    if (!def) throw new BadRequestException('Fase desconhecida no roteiro desta câmara');
+    if (session.phase === phase) return session;
+    const previous = session.phase;
+    session.phase = phase;
+    session.phaseStartedAt = new Date();
+    const saved = await this.sessionsRepo.save(session);
+    await this.audit.log({
+      chamberId: session.chamberId, sessionId: id, userId, action: 'session:phase',
+      detail: { phase, label: def.label, previous },
+    });
+    this.gateway.emitToSession(id, 'session:phase', { sessionId: id, phase, label: def.label, at: session.phaseStartedAt });
+    return saved;
   }
 
   async updateStream(id: string, dto: { youtubeUrl?: string; youtubeThumbnailUrl?: string }): Promise<Session> {
@@ -72,13 +105,23 @@ export class SessionsService {
     return this.sessionsRepo.save(session);
   }
 
-  async end(id: string): Promise<Session> {
+  async end(id: string, userId: string): Promise<Session> {
     const session = await this.findOne(id);
     if (session.status !== 'em_andamento')
       throw new BadRequestException('Sessão não está em andamento');
     session.status = 'encerrada';
     session.endedAt = new Date();
-    return this.sessionsRepo.save(session);
+    session.phase = null;
+    const saved = await this.sessionsRepo.save(session);
+    const minutes = session.startedAt
+      ? Math.round((session.endedAt.getTime() - new Date(session.startedAt).getTime()) / 60000)
+      : null;
+    await this.audit.log({
+      chamberId: session.chamberId, sessionId: id, userId, action: 'session:ended',
+      detail: { number: session.number, durationMin: minutes },
+    });
+    this.gateway.emitToSession(id, 'session:phase', { sessionId: id, phase: null, ended: true });
+    return saved;
   }
 
   async confirmPresence(sessionId: string, userId: string): Promise<SessionPresence> {
@@ -86,6 +129,8 @@ export class SessionsService {
     if (existing) return existing;
     const presence = this.presenceRepo.create({ sessionId, userId });
     const saved = await this.presenceRepo.save(presence);
+    const session = await this.findOne(sessionId);
+    await this.audit.log({ chamberId: session.chamberId, sessionId, userId, action: 'presence:confirmed' });
     const presentCount = await this.presenceRepo.count({ where: { sessionId } });
     this.gateway.emitToSession(sessionId, 'quorum:updated', { sessionId, presentCount, userId, action: 'added' });
     return saved;
@@ -99,7 +144,11 @@ export class SessionsService {
   }
 
   async removePresence(sessionId: string, userId: string): Promise<void> {
-    await this.presenceRepo.delete({ sessionId, userId });
+    const res = await this.presenceRepo.delete({ sessionId, userId });
+    if (res.affected) {
+      const session = await this.findOne(sessionId);
+      await this.audit.log({ chamberId: session.chamberId, sessionId, userId, action: 'presence:removed' });
+    }
     const presentCount = await this.presenceRepo.count({ where: { sessionId } });
     this.gateway.emitToSession(sessionId, 'quorum:updated', { sessionId, presentCount, userId, action: 'removed' });
   }

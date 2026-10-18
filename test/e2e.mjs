@@ -68,6 +68,8 @@ const sess = (await call('POST', '/sessions', { token: pA.accessToken, body: { c
 ok((await call('POST', '/sessions', { token: pB.accessToken, body: { chamberId: chA, number: 9, type: 'ordinaria', date: '2026-10-18' } })).status === 403, 'presidente B não cria sessão em A');
 ok((await call('PATCH', `/sessions/${sess.id}/start`, { token: pB.accessToken })).status === 403, 'presidente B não inicia sessão de A');
 ok((await call('PATCH', `/sessions/${sess.id}/start`, { token: pA.accessToken })).status === 200, 'presidente A inicia sessão');
+ok((await call('GET', `/sessions/${sess.id}`)).data?.phase === 'abertura', 'sessão inicia na fase Abertura do roteiro');
+ok((await call('POST', `/sessions/${sess.id}/presence`, { token: pA.accessToken })).status === 201, 'presidente A confirma presença (quórum)');
 ok((await call('POST', `/expediente/sessions/${sess.id}/inscricoes/abrir/grande`, { token: pB.accessToken })).status === 403, 'presidente B não abre expediente de A');
 
 console.log('\n[tablets]');
@@ -123,6 +125,61 @@ const pub2 = (await call('GET', `/agenda/${item2.id}`)).data;
 ok(pub2.votesYes === 1 && pub2.countsHidden === false, 'votação aberta mostra placar parcial');
 await call('PATCH', `/voting/close/${item2.id}`, { token: pA.accessToken });
 ok((await call('GET', `/voting/item/${item2.id}/verify`, { token: pA.accessToken })).data.valid === true, 'verificação votação aberta: íntegra');
+
+console.log('\n[regimento: quórum, maiorias, presidente, PIN]');
+const agendaItem = (fields) => call('POST', '/agenda', { token: pA.accessToken, body: { sessionId: sess.id, chamberId: chA, number: 'X', type: 'Projeto de Lei', title: 'T', authorName: 'X', votingType: 'aberta', quorumMinimum: 1, orderIndex: 9, ...fields } });
+const rules0 = (await call('GET', `/chambers/${chA}/settings`, { token: pA.accessToken })).data;
+ok(rules0.seats === 4 && rules0.defaultQuorum === 3 && rules0.sessionPhases.length === 7, 'regras padrão: 4 cadeiras (membros ativos), quórum 3, roteiro de 7 fases', JSON.stringify({ s: rules0.seats, q: rules0.defaultQuorum }));
+ok((await call('PATCH', `/chambers/${chA}/settings`, { token: pB.accessToken, body: { totalSeats: 9 } })).status === 403, 'presidente B não altera regimento de A');
+ok((await call('PATCH', `/chambers/${chA}/settings`, { token: pA.accessToken, body: { totalSeats: 99, majorityByType: { X: 'qualquer' } } })).status === 400, 'maioria inválida rejeitada');
+const rules1 = (await call('PATCH', `/chambers/${chA}/settings`, { token: pA.accessToken, body: { totalSeats: 5, presidentVoteRule: 'tie_only', majorityByType: { 'Emenda à Lei Orgânica': 'dois_tercos' } } })).data;
+ok(rules1.seats === 5 && rules1.presidentVoteRule === 'tie_only', 'presidente A configura 5 cadeiras e voto do presidente só no desempate');
+
+const qItem = (await agendaItem({ title: 'Quórum alto', quorumMinimum: 9 })).data;
+const qOpen = await call('PATCH', `/voting/open/${qItem.id}`, { token: pA.accessToken });
+ok(qOpen.status === 400 && /Quórum insuficiente/.test(qOpen.data?.message), 'votação sem quórum não abre', qOpen.data?.message);
+
+const eItem = (await agendaItem({ type: 'Emenda à Lei Orgânica', title: 'Emenda' })).data;
+ok(eItem.majority === 'dois_tercos', 'maioria padrão por tipo de matéria (Emenda → 2/3)');
+await call('PATCH', `/voting/open/${eItem.id}`, { token: pA.accessToken });
+for (const t of [mob, w2, w3]) await call('POST', '/voting/cast', { token: t.accessToken, body: { agendaItemId: eItem.id, choice: 'sim' } });
+const eClosed = (await call('PATCH', `/voting/close/${eItem.id}`, { token: pA.accessToken })).data;
+ok(eClosed.status === 'rejeitado' && eClosed.requiredVotes === 4 && /exige 4 de 5/.test(eClosed.resultExplanation), '3 SIM não aprovam 2/3 de 5 cadeiras (exige 4)', eClosed.resultExplanation);
+
+const tItem = (await agendaItem({ title: 'Empate' })).data;
+await call('PATCH', `/voting/open/${tItem.id}`, { token: pA.accessToken });
+await call('POST', '/voting/cast', { token: w2.accessToken, body: { agendaItemId: tItem.id, choice: 'sim' } });
+const presEarly = await call('POST', '/voting/cast', { token: pA.accessToken, body: { agendaItemId: tItem.id, choice: 'sim' } });
+ok(presEarly.status === 403 && /empate/.test(presEarly.data?.message), 'presidente não vota sem empate (regra tie_only)', presEarly.data?.message);
+await call('POST', '/voting/cast', { token: w3.accessToken, body: { agendaItemId: tItem.id, choice: 'nao' } });
+const tieClose = await call('PATCH', `/voting/close/${tItem.id}`, { token: pA.accessToken });
+ok(tieClose.status === 409 && tieClose.data?.code === 'TIE_NEEDS_PRESIDENT', 'empate exige voto do presidente antes de encerrar', JSON.stringify(tieClose.data));
+ok((await call('POST', '/voting/cast', { token: pA.accessToken, body: { agendaItemId: tItem.id, choice: 'sim' } })).status === 201, 'presidente desempata');
+const tClosed = (await call('PATCH', `/voting/close/${tItem.id}`, { token: pA.accessToken })).data;
+ok(tClosed.status === 'aprovado' && tClosed.votesYes === 2, 'aprovado 2x1 após desempate');
+ok((await call('GET', `/voting/item/${tItem.id}/verify`, { token: pA.accessToken })).data.valid === true, 'verificação com maioria/requiredVotes no hash: íntegra');
+
+await call('PATCH', `/chambers/${chA}/settings`, { token: pA.accessToken, body: { requirePinToVote: true } });
+const pItem = (await agendaItem({ title: 'PIN' })).data;
+await call('PATCH', `/voting/open/${pItem.id}`, { token: pA.accessToken });
+const noPin = await call('POST', '/voting/cast', { token: mob.accessToken, body: { agendaItemId: pItem.id, choice: 'sim' } });
+ok(noPin.status === 400 && noPin.data?.code === 'PIN_REQUIRED', 'câmara exige PIN: voto sem PIN recusado');
+ok((await call('POST', '/voting/cast', { token: mob.accessToken, body: { agendaItemId: pItem.id, choice: 'sim', pin: '000000' } })).status === 401, 'PIN errado recusado');
+ok((await call('POST', '/voting/cast', { token: mob.accessToken, body: { agendaItemId: pItem.id, choice: 'sim', pin: '482913' } })).status === 201, 'voto confirmado com PIN correto');
+await call('PATCH', `/voting/close/${pItem.id}`, { token: pA.accessToken });
+await call('PATCH', `/chambers/${chA}/settings`, { token: pA.accessToken, body: { requirePinToVote: false, presidentVoteRule: 'always' } });
+
+console.log('\n[roteiro + expediente]');
+ok((await call('PATCH', `/sessions/${sess.id}/phase`, { token: pB.accessToken, body: { phase: 'ordem_do_dia' } })).status === 403, 'presidente B não muda fase de A');
+ok((await call('PATCH', `/sessions/${sess.id}/phase`, { token: pA.accessToken, body: { phase: 'inexistente' } })).status === 400, 'fase fora do roteiro recusada');
+ok((await call('PATCH', `/sessions/${sess.id}/phase`, { token: pA.accessToken, body: { phase: 'grande_expediente' } })).data?.phase === 'grande_expediente', 'presidente avança para Grande Expediente');
+await call('POST', `/expediente/sessions/${sess.id}/inscricoes/abrir/grande`, { token: pA.accessToken });
+ok((await call('POST', `/expediente/sessions/${sess.id}/inscrever`, { token: w3.accessToken, body: { tipo: 'grande' } })).status === 201, 'vereador se inscreve no expediente');
+const insc = (await call('GET', `/expediente/sessions/${sess.id}/inscritos`, { token: pA.accessToken })).data;
+ok((await call('POST', `/expediente/sessions/${sess.id}/liberar/${insc[0].id}`, { token: pA.accessToken })).status === 201, 'presidente libera a fala');
+await new Promise(r => setTimeout(r, 1200));
+ok((await call('POST', `/expediente/sessions/${sess.id}/encerrar`, { token: pA.accessToken })).status === 200, 'presidente encerra a fala');
+await call('PATCH', `/sessions/${sess.id}/phase`, { token: pA.accessToken, body: { phase: 'ordem_do_dia' } });
 
 console.log('\n[socket: placar secreto]');
 const { io } = await import('socket.io-client');
@@ -186,6 +243,37 @@ await call('PATCH', `/users/${v3.id}/pin`, { token: pA.accessToken, body: { pin:
 const st = [];
 for (let i = 0; i < 6; i++) st.push((await call('POST', '/auth/mobile-login', { body: { userId: v3.id, pin: '000000', deviceKey: KEY2, deviceName: 'x' } })).status);
 ok(st.slice(0, 5).every(s => s === 401) && st[5] === 429, 'bloqueio após 5 PINs errados', st.join(','));
+
+console.log('\n[ata automática]');
+ok((await call('PATCH', `/sessions/${sess.id}/end`, { token: pA.accessToken })).status === 200, 'presidente encerra a sessão');
+const ata1 = (await call('GET', `/sessions/${sess.id}/ata`)).data;
+const ata2 = (await call('GET', `/sessions/${sess.id}/ata`)).data;
+ok(/^[0-9a-f]{64}$/.test(ata1.documentHash) && ata1.documentHash === ata2.documentHash, 'ata com hash do documento estável');
+ok(ata1.roteiro.some(r => r.evento === 'Abertura da sessão') && ata1.roteiro.some(r => r.evento === 'Grande Expediente') && ata1.roteiro.some(r => r.evento === 'Encerramento da sessão'), 'ata registra o roteiro com horários');
+ok(ata1.falas.some(f => f.evento === 'fala:iniciada') && ata1.falas.some(f => f.evento === 'fala:encerrada' && f.detalhe.motivo === 'encerrado_presidente'), 'ata registra falas do expediente');
+ok(ata1.presentes.some(p => p.name === 'Pres Alfa') && ata1.ausentes.length === 0, 'ata lista presentes e ausentes');
+const ataTie = ata1.votacoes.find(v => v.title === 'Empate');
+ok(ataTie?.nominal?.length === 3 && ataTie.explanation && ataTie.resultHash, 'ata traz votação nominal, explicação e hash do resultado');
+const ataSecret = ata1.votacoes.find(v => v.title === 'Secreto');
+ok(ataSecret && ataSecret.nominal === null && ataSecret.votantes.length === 3, 'ata de votação secreta lista só quem votou');
+
+console.log('\n[portal de transparência]');
+const sum = (await call('GET', `/public/chambers/${chA}`)).data;
+const presA = sum.membros?.find(m => m.name === 'Pres Alfa');
+ok(sum.totais?.sessoes === 1 && presA?.taxaPresenca === 100 && !('email' in presA), 'resumo público: presença por membro, sem e-mail');
+const pubList = (await call('GET', `/public/chambers/${chA}/votacoes`)).data;
+ok(Array.isArray(pubList) && pubList.length >= 5 && pubList.every(v => ['aprovado', 'rejeitado'].includes(v.status)), 'lista pública só de votações encerradas');
+const pubOpen = (await call('GET', `/public/votacoes/${item2.id}`)).data;
+ok(pubOpen.nominal?.length === 2 && pubOpen.verificacao.valid === true, 'votação aberta: nominal + verificação pública íntegra');
+const pubSecret = (await call('GET', `/public/votacoes/${item.id}`)).data;
+ok(pubSecret.nominal === null && pubSecret.verificacao.valid === false, 'votação secreta sem nominal; adulteração aparece na verificação pública');
+ok((await call('GET', `/public/votacoes/${qItem.id}`)).status === 404, 'votação não encerrada não aparece no portal');
+const prof = (await call('GET', `/public/chambers/${chA}/vereadores/${v3.id}`)).data;
+ok(Array.isArray(prof.votos) && prof.votos.every(v => v.choice !== 'secreta'), 'perfil do vereador: só votos de votação aberta');
+const csvRes = await fetch(`${B}/public/chambers/${chA}/dados/votacoes.csv`);
+const csvTxt = await csvRes.text();
+ok(/text\/csv/.test(csvRes.headers.get('content-type')) && csvTxt.includes('sessao;data_sessao;numero'), 'dados abertos em CSV');
+ok((await fetch(`${B}/public/chambers/${chA}/dados/senhas.csv`)).status === 404, 'CSV inexistente = 404');
 
 console.log('\n[headers]');
 const h = await fetch(B + '/health');

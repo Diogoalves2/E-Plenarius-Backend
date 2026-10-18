@@ -64,7 +64,7 @@ main() {
   [[ "$sha" =~ ^[0-9a-f]{7,40}$ ]] || { echo "sha inválido" >&2; exit 2; }
 
   exec 9>/var/lock/eplenarius-deploy.lock
-  flock -n 9 || die "outro deploy em andamento"
+  flock -w 60 9 || die "outro deploy em andamento"
   log "deploy $sha (sync schema: $sync)"
 
   STAGE=$(mktemp -d /tmp/eplenarius-release.XXXXXX)

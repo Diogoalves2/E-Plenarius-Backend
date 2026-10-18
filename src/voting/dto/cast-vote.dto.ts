@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEnum, IsOptional, IsString, IsUUID } from 'class-validator';
+import { IsEnum, IsOptional, IsString, IsUUID, Matches, MaxLength } from 'class-validator';
 import { VoteChoice } from '../entities/vote.entity';
 
 export class CastVoteDto {
@@ -14,5 +14,11 @@ export class CastVoteDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @MaxLength(200)
   deviceInfo?: string;
+
+  @ApiPropertyOptional({ description: 'PIN do vereador (quando a câmara exige confirmação do voto)' })
+  @IsOptional()
+  @Matches(/^\d{4,6}$/, { message: 'PIN inválido' })
+  pin?: string;
 }

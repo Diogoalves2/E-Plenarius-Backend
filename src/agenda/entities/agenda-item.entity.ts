@@ -2,6 +2,7 @@ import {
   Entity, PrimaryGeneratedColumn, Column, ManyToOne,
   JoinColumn, CreateDateColumn, UpdateDateColumn,
 } from 'typeorm';
+import { Majority } from '../../common/legislative';
 import { Session } from '../../sessions/entities/session.entity';
 import { User } from '../../users/entities/user.entity';
 
@@ -53,6 +54,17 @@ export class AgendaItem {
 
   @Column({ default: 5 })
   quorumMinimum: number;
+
+  @Column({ type: 'varchar', default: 'simples' })
+  majority: Majority;
+
+  /** Votos SIM exigidos, calculado no encerramento (entra no resultHash). */
+  @Column({ type: 'int', nullable: true })
+  requiredVotes: number | null;
+
+  /** Texto do resultado para ata/portal (ex.: "Aprovado — maioria absoluta exige 5 de 9..."). */
+  @Column({ type: 'text', nullable: true })
+  resultExplanation: string | null;
 
   @Column({ default: 0 })
   orderIndex: number;

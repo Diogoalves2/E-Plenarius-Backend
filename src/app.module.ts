@@ -18,6 +18,8 @@ import { UploadModule } from './upload/upload.module';
 import { ExpedienteModule } from './expediente/expediente.module';
 import { StatsModule } from './stats/stats.module';
 import { RegimentoModule } from './regimento/regimento.module';
+import { DevicesModule } from './devices/devices.module';
+import { TransparencyModule } from './transparency/transparency.module';
 
 @Module({
   imports: [
@@ -78,6 +80,8 @@ import { RegimentoModule } from './regimento/regimento.module';
     ExpedienteModule,
     StatsModule,
     RegimentoModule,
+    DevicesModule,
+    TransparencyModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: HttpThrottlerGuard }, DatabaseIntegrityService],

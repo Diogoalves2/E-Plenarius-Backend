@@ -8,6 +8,15 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Public } from '../common/decorators/public.decorator';
 import { ChamberAccessService } from '../common/access/chamber-access.service';
+import { AtaService } from './ata.service';
+import { IsString, Matches } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
+
+export class SetPhaseDto {
+  @ApiProperty({ example: 'ordem_do_dia' })
+  @IsString() @Matches(/^[a-z0-9_]{2,40}$/)
+  phase: string;
+}
 
 @ApiTags('sessions')
 @ApiBearerAuth()
@@ -17,6 +26,7 @@ export class SessionsController {
   constructor(
     private readonly sessionsService: SessionsService,
     private readonly access: ChamberAccessService,
+    private readonly ataService: AtaService,
   ) {}
 
   @Post()
@@ -62,7 +72,7 @@ export class SessionsController {
   @ApiOperation({ summary: 'Iniciar sessão' })
   async start(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: any) {
     await this.access.assertSession(user, id);
-    return this.sessionsService.start(id);
+    return this.sessionsService.start(id, user.id);
   }
 
   @Patch(':id/end')
@@ -71,7 +81,23 @@ export class SessionsController {
   @ApiOperation({ summary: 'Encerrar sessão' })
   async end(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: any) {
     await this.access.assertSession(user, id);
-    return this.sessionsService.end(id);
+    return this.sessionsService.end(id, user.id);
+  }
+
+  @Patch(':id/phase')
+  @UseGuards(RolesGuard)
+  @Roles('presidente')
+  @ApiOperation({ summary: 'Mudar a fase do roteiro da sessão' })
+  async setPhase(@Param('id', ParseUUIDPipe) id: string, @Body() body: SetPhaseDto, @CurrentUser() user: any) {
+    await this.access.assertSession(user, id);
+    return this.sessionsService.setPhase(id, body.phase, user.id);
+  }
+
+  @Get(':id/ata')
+  @Public()
+  @ApiOperation({ summary: 'Ata da sessão montada da auditoria (presenças, roteiro, falas, votações, hashes)' })
+  ata(@Param('id', ParseUUIDPipe) id: string) {
+    return this.ataService.build(id);
   }
 
   @Patch(':id/stream')

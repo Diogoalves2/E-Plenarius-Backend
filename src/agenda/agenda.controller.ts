@@ -9,6 +9,7 @@ import { Public } from '../common/decorators/public.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ChamberAccessService } from '../common/access/chamber-access.service';
 import { maskSecretCounts } from '../common/integrity';
+import { ChambersService } from '../chambers/chambers.service';
 
 @ApiTags('agenda')
 @ApiBearerAuth()
@@ -18,6 +19,7 @@ export class AgendaController {
   constructor(
     private readonly agendaService: AgendaService,
     private readonly access: ChamberAccessService,
+    private readonly chambers: ChambersService,
   ) {}
 
   @Post()
@@ -26,8 +28,14 @@ export class AgendaController {
   @ApiOperation({ summary: 'Adicionar item à pauta' })
   async create(@Body() dto: CreateAgendaItemDto, @CurrentUser() user: any) {
     const session = await this.access.assertSession(user, dto.sessionId);
+    const rules = await this.chambers.getRules(session.chamberId);
     // chamberId sempre o da sessão — nunca o enviado pelo cliente.
-    return this.agendaService.create({ ...dto, chamberId: session.chamberId });
+    // Maioria: a escolhida no formulário ou a padrão da câmara para o tipo de matéria.
+    return this.agendaService.create({
+      ...dto,
+      chamberId: session.chamberId,
+      majority: dto.majority ?? rules.majorityByType[dto.type] ?? 'simples',
+    });
   }
 
   @Get('session/:sessionId')

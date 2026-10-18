@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, BadRequestException } from "@nestjs/common";
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { randomBytes } from 'crypto';
@@ -8,6 +8,20 @@ import { User } from '../users/entities/user.entity';
 import { Session } from '../sessions/entities/session.entity';
 import { CreateChamberDto } from './dto/create-chamber.dto';
 import { SetupChamberDto } from './dto/setup-chamber.dto';
+import { ChamberSettingsDto } from './dto/chamber-settings.dto';
+import { DEFAULT_PHASES, Majority, PresidentVoteRule, SessionPhase } from '../common/legislative';
+
+export interface ChamberRules {
+  chamberId: string;
+  seats: number;
+  seatsConfigured: boolean;
+  presidentVoteRule: PresidentVoteRule;
+  majorityByType: Record<string, Majority>;
+  defaultQuorum: number;
+  requirePinToVote: boolean;
+  autoOpenMic: boolean;
+  sessionPhases: SessionPhase[];
+}
 
 @Injectable()
 export class ChambersService {
@@ -97,16 +111,58 @@ export class ChambersService {
     return { presidenteEmail: presidente.email, presidentePassword: plainPassword };
   }
 
+  /** Regras regimentais efetivas (com defaults resolvidos). */
+  async getRules(chamberId: string): Promise<ChamberRules> {
+    const c = await this.findOne(chamberId);
+    const members = await this.usersRepo.count({
+      where: [
+        { chamberId, isActive: true, role: 'vereador' },
+        { chamberId, isActive: true, role: 'presidente' },
+      ],
+    });
+    const seats = c.totalSeats ?? members;
+    return {
+      chamberId,
+      seats,
+      seatsConfigured: c.totalSeats != null,
+      presidentVoteRule: c.presidentVoteRule ?? 'always',
+      majorityByType: c.majorityByType ?? {},
+      // Padrão: maioria absoluta dos membros presentes para deliberar.
+      defaultQuorum: c.defaultQuorum ?? Math.floor(seats / 2) + 1,
+      requirePinToVote: !!c.requirePinToVote,
+      autoOpenMic: !!c.autoOpenMic,
+      sessionPhases: c.sessionPhases?.length ? c.sessionPhases : DEFAULT_PHASES,
+    };
+  }
+
+  async updateSettings(chamberId: string, dto: ChamberSettingsDto): Promise<ChamberRules> {
+    const c = await this.findOne(chamberId);
+    if (dto.majorityByType) {
+      for (const [type, m] of Object.entries(dto.majorityByType)) {
+        if (!['simples', 'absoluta', 'dois_tercos'].includes(m as string) || type.length > 100) {
+          throw new BadRequestException(`Maioria inválida para "${type}"`);
+        }
+      }
+    }
+    if (dto.sessionPhases) {
+      const keys = dto.sessionPhases.map(p => p.key);
+      if (new Set(keys).size !== keys.length) throw new BadRequestException("Fases com chave repetida");
+    }
+    Object.assign(c, dto);
+    await this.chambersRepo.save(c);
+    return this.getRules(chamberId);
+  }
+
   async findBySlug(slug: string): Promise<Chamber> {
     const chamber = await this.chambersRepo.findOne({ where: { slug } });
     if (!chamber) throw new NotFoundException('Câmara não encontrada');
     return chamber;
   }
 
-  async findBySlugPublic(slug: string): Promise<{ id: string; name: string; city: string; state: string; logoUrl: string | null; isActive: boolean; hasActiveSession: boolean }> {
+  async findBySlugPublic(slug: string): Promise<{ id: string; name: string; city: string; state: string; logoUrl: string | null; isActive: boolean; requirePinToVote: boolean; hasActiveSession: boolean }> {
     const chamber = await this.chambersRepo.findOne({
       where: { slug },
-      select: ['id', 'name', 'city', 'state', 'logoUrl', 'isActive'],
+      select: ['id', 'name', 'city', 'state', 'logoUrl', 'isActive', 'requirePinToVote'],
     });
     if (!chamber) throw new NotFoundException('Câmara não encontrada');
 

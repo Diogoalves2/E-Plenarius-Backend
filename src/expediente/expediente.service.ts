@@ -9,6 +9,9 @@ import { SessionPresence } from '../sessions/entities/session-presence.entity';
 import { VotingGateway } from '../voting/voting.gateway';
 import { InscreverExpedienteDto } from './dto/inscrever-expediente.dto';
 import { CriarConvidadoDto } from './dto/criar-convidado.dto';
+import { Session } from '../sessions/entities/session.entity';
+import { AuditService } from '../audit/audit.service';
+import { ChambersService } from '../chambers/chambers.service';
 
 type Interval = ReturnType<typeof setInterval>;
 
@@ -36,6 +39,7 @@ interface AparteAtivo {
 interface TimerState {
   timer: Interval;
   tempoRestante: number;
+  duracao: number;
   inscricaoId: string;
   vereador: VereadorInfo;
   tipo: 'grande' | 'pequeno';
@@ -63,7 +67,30 @@ export class ExpedienteService {
     @InjectRepository(SessionPresence)
     private presencesRepo: Repository<SessionPresence>,
     private gateway: VotingGateway,
+    @InjectRepository(Session)
+    private sessionsRepo: Repository<Session>,
+    private audit: AuditService,
+    private chambers: ChambersService,
   ) {}
+
+  private chamberBySession = new Map<string, string>();
+
+  private async chamberOf(sessionId: string): Promise<string | null> {
+    if (!this.chamberBySession.has(sessionId)) {
+      const s = await this.sessionsRepo.findOne({ where: { id: sessionId }, select: ['id', 'chamberId'] });
+      if (!s) return null;
+      this.chamberBySession.set(sessionId, s.chamberId);
+    }
+    return this.chamberBySession.get(sessionId)!;
+  }
+
+  /** Registro na auditoria encadeada (alimenta a ata). Nunca derruba o fluxo do expediente. */
+  private async record(sessionId: string, action: string, detail: Record<string, any>, userId?: string) {
+    try {
+      const chamberId = await this.chamberOf(sessionId);
+      if (chamberId) await this.audit.log({ chamberId, sessionId, userId, action, detail });
+    } catch { /* auditoria do expediente é best-effort */ }
+  }
 
   // ─── Estado inscrições ─────────────────────────────────────────────────────
 
@@ -92,9 +119,9 @@ export class ExpedienteService {
     return { ok: true, tipo, aberta: false };
   }
 
-  /** Emite evento audio:mute via socket pra bridge agent local.
+  /** Emite audio:mute / audio:unmute via socket pra bridge agent local (mesa de som).
    *  Emite tanto pro room session:* (compat) quanto chamber:* (bridge persistente). */
-  private async emitAudioMute(sessionId: string, userId: string | undefined, reason: string): Promise<void> {
+  private async emitAudio(event: 'audio:mute' | 'audio:unmute', sessionId: string, userId: string | undefined, reason: string): Promise<void> {
     if (!userId) return;
     try {
       const user = await this.usersRepo.findOne({
@@ -102,10 +129,15 @@ export class ExpedienteService {
         select: ['id', 'audioChannel', 'chamberId'],
       });
       if (!user?.audioChannel) return;
+      if (event === 'audio:unmute' && user.chamberId && !(await this.chambers.getRules(user.chamberId)).autoOpenMic) return;
       const payload = { channel: user.audioChannel, userId, reason, sessionId };
-      this.gateway.emitToSession(sessionId, 'audio:mute', payload);
-      if (user.chamberId) this.gateway.emitToChamber(user.chamberId, 'audio:mute', payload);
-    } catch { /* ignora — corte de áudio é best-effort */ }
+      this.gateway.emitToSession(sessionId, event, payload);
+      if (user.chamberId) this.gateway.emitToChamber(user.chamberId, event, payload);
+    } catch { /* ignora — controle de áudio é best-effort */ }
+  }
+
+  private emitAudioMute(sessionId: string, userId: string | undefined, reason: string) {
+    return this.emitAudio('audio:mute', sessionId, userId, reason);
   }
 
   // ─── Inscrições ────────────────────────────────────────────────────────────
@@ -229,6 +261,10 @@ export class ExpedienteService {
       tempoRestante: duracao,
       vereador,
     });
+    await this.record(sessionId, 'fala:iniciada', {
+      tipo: inscricao.tipo, orador: vereador.name, cargo: vereador.title ?? vereador.party, convidado: isGuest, duracaoSeg: duracao,
+    }, isGuest ? undefined : vereador.id);
+    if (!isGuest) await this.emitAudio('audio:unmute', sessionId, vereador.id, 'fala_liberada');
 
     const timer = setInterval(async () => {
       const state = this.timers.get(sessionId);
@@ -242,12 +278,16 @@ export class ExpedienteService {
         await this.inscricoesRepo.update(inscricaoId, { status: 'concluido' });
         this.gateway.emitToSession(sessionId, 'expediente:encerrado', { motivo: 'tempo_esgotado' });
         await this.emitAudioMute(sessionId, state.vereador?.id, 'tempo_esgotado');
+        await this.record(sessionId, 'fala:encerrada', {
+          tipo: state.tipo, orador: state.vereador?.name, motivo: 'tempo_esgotado', usadoSeg: state.duracao,
+        });
       }
     }, 1000);
 
     this.timers.set(sessionId, {
       timer,
       tempoRestante: duracao,
+      duracao,
       inscricaoId,
       vereador,
       tipo: inscricao.tipo,
@@ -279,11 +319,14 @@ export class ExpedienteService {
       state.aparteAtivo = null;
     }
 
-    const { inscricaoId, vereador } = state;
+    const { inscricaoId, vereador, tipo, duracao, tempoRestante } = state;
     this.clearTimer(sessionId);
     await this.inscricoesRepo.update(inscricaoId, { status: 'concluido' });
     this.gateway.emitToSession(sessionId, 'expediente:encerrado', { motivo: 'encerrado_presidente' });
     await this.emitAudioMute(sessionId, vereador?.id, 'encerrado_presidente');
+    await this.record(sessionId, 'fala:encerrada', {
+      tipo, orador: vereador?.name, motivo: 'encerrado_presidente', usadoSeg: Math.max(0, duracao - tempoRestante),
+    });
     return { ok: true };
   }
 
@@ -292,6 +335,7 @@ export class ExpedienteService {
     const state = this.timers.get(sessionId);
     if (!state) throw new BadRequestException('Nenhum expediente ativo');
     await this.emitAudioMute(sessionId, state.vereador?.id, 'cortar_fala');
+    await this.record(sessionId, 'fala:cortada', { orador: state.vereador?.name });
     return { ok: true, channel: state.vereador?.id };
   }
 
@@ -400,6 +444,8 @@ export class ExpedienteService {
     }, 1000);
 
     state.aparteAtivo = { timer: aparteTimer, tempoRestante, vereador };
+    this.record(sessionId, 'aparte:iniciado', { aparteante: vereador.name, orador: state.vereador?.name }, vereador.id);
+    this.emitAudio('audio:unmute', sessionId, vereador.id, 'aparte_concedido');
 
     this.gateway.emitToSession(sessionId, 'aparte:iniciado', {
       vereador,
@@ -429,6 +475,7 @@ export class ExpedienteService {
     this.gateway.emitToSession(sessionId, 'aparte:encerrado', {
       tempoRestanteOrador: state.tempoRestante,
     });
+    this.record(sessionId, 'aparte:encerrado', { orador: state.vereador?.name });
     // muta canal do aparteante
     this.emitAudioMute(sessionId, aparteVereadorId, 'aparte_encerrado').catch(() => {});
   }

@@ -2,8 +2,6 @@ import {
   Injectable,
   UnauthorizedException,
   ForbiddenException,
-  HttpException,
-  HttpStatus,
   Logger,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -13,6 +11,7 @@ import { ConfigService } from '@nestjs/config';
 import { randomBytes, randomUUID } from 'crypto';
 import { sha256 } from '../common/integrity';
 import { DevicesService } from '../devices/devices.service';
+import { LoginAttemptsService } from '../common/access/login-attempts.service';
 import { UsersService } from '../users/users.service';
 import { RefreshToken } from './entities/refresh-token.entity';
 import { Session } from '../sessions/entities/session.entity';
@@ -23,33 +22,6 @@ import { JwtPayload } from './strategies/jwt.strategy';
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
 
-  /** Falhas de login por usuário (em memória — backend roda em instância única). */
-  private readonly failures = new Map<string, { count: number; lockedUntil: number }>();
-  private static readonly MAX_FAILURES = 5;
-  private static readonly LOCK_MS = 5 * 60 * 1000;
-
-  private assertNotLocked(key: string) {
-    const entry = this.failures.get(key);
-    if (entry && entry.lockedUntil > Date.now()) {
-      const min = Math.ceil((entry.lockedUntil - Date.now()) / 60000);
-      throw new HttpException(
-        `Muitas tentativas incorretas. Tente novamente em ${min} min.`,
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
-    }
-  }
-
-  private registerFailure(key: string) {
-    const entry = this.failures.get(key) ?? { count: 0, lockedUntil: 0 };
-    if (entry.lockedUntil && entry.lockedUntil <= Date.now()) entry.count = 0;
-    entry.count += 1;
-    if (entry.count >= AuthService.MAX_FAILURES) {
-      entry.lockedUntil = Date.now() + AuthService.LOCK_MS;
-      this.logger.warn(`[auth] bloqueado ${key} por ${AuthService.LOCK_MS / 60000} min`);
-    }
-    this.failures.set(key, entry);
-  }
-
   constructor(
     private readonly usersService: UsersService,
     private readonly jwtService: JwtService,
@@ -59,6 +31,7 @@ export class AuthService {
     @InjectRepository(Session)
     private readonly sessionRepo: Repository<Session>,
     private readonly devices: DevicesService,
+    private readonly attempts: LoginAttemptsService,
   ) {}
 
   async login(dto: LoginDto) {
@@ -75,7 +48,7 @@ export class AuthService {
       throw new UnauthorizedException('Credenciais inválidas');
     }
 
-    this.assertNotLocked(`pwd:${user.id}`);
+    this.attempts.assertNotLocked(`pwd:${user.id}`);
     let valid: boolean;
     try {
       valid = await user.validatePassword(dto.password);
@@ -85,10 +58,10 @@ export class AuthService {
     }
     if (!valid) {
       this.logger.warn(`[login] senha invalida user=${user.id}`);
-      this.registerFailure(`pwd:${user.id}`);
+      this.attempts.registerFailure(`pwd:${user.id}`);
       throw new UnauthorizedException('Credenciais inválidas');
     }
-    this.failures.delete(`pwd:${user.id}`);
+    this.attempts.clear(`pwd:${user.id}`);
 
     if (!user.isActive) throw new ForbiddenException('Conta desativada');
 
@@ -131,7 +104,7 @@ export class AuthService {
       throw new UnauthorizedException('PIN não cadastrado. Solicite ao presidente.');
     }
 
-    this.assertNotLocked(`pin:${user.id}`);
+    this.attempts.assertNotLocked(`pin:${user.id}`);
 
     // Tablet precisa estar cadastrado e aprovado pelo presidente da câmara.
     const device = await this.devices.findByKey(dto.deviceKey);
@@ -147,10 +120,10 @@ export class AuthService {
 
     const valid = await user.validatePin(dto.pin);
     if (!valid) {
-      this.registerFailure(`pin:${user.id}`);
+      this.attempts.registerFailure(`pin:${user.id}`);
       throw new UnauthorizedException('PIN incorreto');
     }
-    this.failures.delete(`pin:${user.id}`);
+    this.attempts.clear(`pin:${user.id}`);
 
     // Tablet novo + PIN correto: registra como pendente. Só entra depois da aprovação.
     if (!device) {

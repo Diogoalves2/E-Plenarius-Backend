@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsEnum, IsInt, IsOptional, IsString, IsUUID, Min } from 'class-validator';
 import { VotingType } from '../entities/agenda-item.entity';
+import { Majority } from '../../common/legislative';
 
 export class CreateAgendaItemDto {
   @ApiProperty({ example: 'uuid-da-sessao' })
@@ -50,6 +51,11 @@ export class CreateAgendaItemDto {
   @IsInt()
   @Min(1)
   quorumMinimum: number;
+
+  @ApiPropertyOptional({ enum: ['simples', 'absoluta', 'dois_tercos'], default: 'simples' })
+  @IsOptional()
+  @IsEnum(['simples', 'absoluta', 'dois_tercos'])
+  majority?: Majority;
 
   @ApiProperty({ default: 0 })
   @IsInt()

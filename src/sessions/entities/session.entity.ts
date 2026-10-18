@@ -41,6 +41,13 @@ export class Session {
   @Column({ type: 'varchar', default: 'agendada' })
   status: SessionStatus;
 
+  /** Fase atual do roteiro (chave de Chamber.sessionPhases / DEFAULT_PHASES). */
+  @Column({ type: 'varchar', nullable: true })
+  phase: string | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  phaseStartedAt: Date | null;
+
   @Column({ nullable: true })
   youtubeUrl: string;
 
