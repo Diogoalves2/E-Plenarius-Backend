@@ -9,7 +9,7 @@ import { Session } from '../sessions/entities/session.entity';
 import { CreateChamberDto } from './dto/create-chamber.dto';
 import { SetupChamberDto } from './dto/setup-chamber.dto';
 import { ChamberSettingsDto } from './dto/chamber-settings.dto';
-import { DEFAULT_PHASES, Majority, PresidentVoteRule, SessionPhase } from '../common/legislative';
+import { DEFAULT_PHASES, Majority, PresidentVoteRule, SessionPhase, sortMesaFirst } from '../common/legislative';
 
 export interface ChamberRules {
   chamberId: string;
@@ -188,7 +188,7 @@ export class ChambersService {
       .orderBy('user.name', 'ASC')
       .getMany();
 
-    return users.map(u => ({
+    return sortMesaFirst(users).map(u => ({
       id: u.id,
       name: u.name,
       initials: u.initials,

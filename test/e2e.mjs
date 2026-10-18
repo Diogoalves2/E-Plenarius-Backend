@@ -162,6 +162,11 @@ ok((await call('GET', `/voting/item/${tItem.id}/verify`, { token: pA.accessToken
 console.log('\n[vice-presidente]');
 const vp = (await call('POST', '/users', { token: pA.accessToken, body: { chamberId: chA, name: 'Vice Alfa', email: 'vp@t.com', password: 'senhaVice123', role: 'vice_presidente' } })).data;
 ok(vp?.role === 'vice_presidente', 'presidente cadastra vice-presidente');
+await call('PATCH', `/users/${v3.id}`, { token: pA.accessToken, body: { title: '1º Secretário(a)' } });
+const ordem = (await call('GET', `/users/chamber/${chA}`, { token: pA.accessToken })).data.map(u => u.name);
+ok(ordem.slice(0, 5).join(',') === 'Pres Alfa,Vice Alfa,Ver 3,Ver 1,Ver 2', 'painel: Mesa Diretora primeiro, depois ordem alfabética', ordem.join(','));
+const ordemTablet = (await call('GET', '/chambers/by-slug/camara-alfa/vereadores')).data.map(u => u.name);
+ok(ordemTablet.join(',') === 'Pres Alfa,Vice Alfa,Ver 3,Ver 1,Ver 2', 'tablet: Mesa Diretora primeiro, depois ordem alfabética', ordemTablet.join(','));
 const wVp = await login('vp@t.com', 'senhaVice123');
 ok(!!wVp?.accessToken, 'vice entra no painel');
 ok((await call('PATCH', `/chambers/${chA}/settings`, { token: wVp.accessToken, body: { totalSeats: 7 } })).status === 403, 'vice não altera regras do regimento');

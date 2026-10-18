@@ -65,3 +65,24 @@ export function presidentMayVote(rule: PresidentVoteRule, majority: Majority, ye
   if (rule === 'tie_only') return tie;
   return tie || majority !== 'simples';
 }
+
+/**
+ * Posição na listagem: Mesa Diretora (presidente, vice, 1º e 2º secretários), depois os demais
+ * vereadores; servidores (perfil sem voto) por último.
+ */
+export function mesaRank(u: { role?: string | null; title?: string | null }): number {
+  if (u.role === 'presidente') return 0;
+  if (u.role === 'vice_presidente') return 1;
+  const t = (u.title ?? '').trim();
+  if (/^1\s*[º°o.]?\s*secret/i.test(t)) return 2;
+  if (/^2\s*[º°o.]?\s*secret/i.test(t)) return 3;
+  return u.role === 'vereador' ? 4 : 5;
+}
+
+/** Ativos antes de inativos; Mesa Diretora primeiro; depois ordem alfabética (pt-BR). */
+export function sortMesaFirst<T extends { role?: string | null; title?: string | null; name: string; isActive?: boolean }>(list: T[]): T[] {
+  return [...list].sort((a, b) =>
+    Number(b.isActive !== false) - Number(a.isActive !== false)
+    || mesaRank(a) - mesaRank(b)
+    || a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }));
+}

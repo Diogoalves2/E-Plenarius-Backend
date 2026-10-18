@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { VotingService } from '../voting/voting.service';
-import { MAJORITY_LABEL, Majority } from '../common/legislative';
+import { MAJORITY_LABEL, Majority, sortMesaFirst } from '../common/legislative';
 
 const CLOSED = `('aprovado', 'rejeitado')`;
 
@@ -54,7 +54,7 @@ export class TransparencyService {
          (SELECT COUNT(*)::int FROM agenda_items WHERE "chamberId"::text = $1::text AND status = 'rejeitado') AS rejeitadas`,
       [chamberId],
     );
-    return { camara, totais: tot, membros: membros.map(this.withRate) };
+    return { camara, totais: tot, membros: sortMesaFirst(membros as any[]).map(this.withRate) };
   }
 
   private withRate = (m: any) => ({ ...m, taxaPresenca: m.sessoes ? Math.round((m.presencas / m.sessoes) * 100) : null });

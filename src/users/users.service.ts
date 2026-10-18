@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { User } from './entities/user.entity';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { sortMesaFirst } from '../common/legislative';
 
 @Injectable()
 export class UsersService {
@@ -41,12 +42,12 @@ export class UsersService {
     return result;
   }
 
-  findByChamber(chamberId: string): Promise<User[]> {
-    return this.usersRepo.find({
+  async findByChamber(chamberId: string): Promise<User[]> {
+    const users = await this.usersRepo.find({
       where: { chamberId },
-      order: { isActive: 'DESC', name: 'ASC' },
       select: ['id', 'name', 'email', 'username', 'role', 'title', 'party', 'initials', 'avatarUrl', 'isActive', 'lastLoginAt', 'audioChannel', 'createdAt'],
     });
+    return sortMesaFirst(users);
   }
 
   async findById(id: string): Promise<User> {
