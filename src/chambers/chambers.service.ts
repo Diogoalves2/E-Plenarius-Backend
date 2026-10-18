@@ -118,6 +118,7 @@ export class ChambersService {
       where: [
         { chamberId, isActive: true, role: 'vereador' },
         { chamberId, isActive: true, role: 'presidente' },
+        { chamberId, isActive: true, role: 'vice_presidente' },
       ],
     });
     const seats = c.totalSeats ?? members;
@@ -183,7 +184,7 @@ export class ChambersService {
       .addSelect('user.pinHash')
       .where('user.chamberId = :chamberId', { chamberId: chamber.id })
       .andWhere('user.isActive = true')
-      .andWhere('user.role IN (:...roles)', { roles: ['vereador', 'presidente'] })
+      .andWhere('user.role IN (:...roles)', { roles: ['vereador', 'presidente', 'vice_presidente'] })
       .orderBy('user.name', 'ASC')
       .getMany();
 

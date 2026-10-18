@@ -33,7 +33,7 @@ export class AtaService {
 
     const members = await q(
       `SELECT id, name, party, role, title FROM users
-        WHERE "chamberId" = $1 AND role IN ('vereador', 'presidente') AND "isActive" = true
+        WHERE "chamberId" = $1 AND role IN ('vereador', 'presidente', 'vice_presidente') AND "isActive" = true
         ORDER BY name`,
       [session.chamberId],
     );

@@ -32,7 +32,7 @@ export class ExpedienteController {
 
   @Post(':sessionId/inscricoes/abrir/:tipo')
   @UseGuards(RolesGuard)
-  @Roles('presidente')
+  @Roles('presidente', 'vice_presidente')
   @HttpCode(200)
   @ApiOperation({ summary: 'Presidente abre inscrições do tipo (grande|pequeno)' })
   abrirInscricoes(
@@ -44,7 +44,7 @@ export class ExpedienteController {
 
   @Post(':sessionId/inscricoes/encerrar/:tipo')
   @UseGuards(RolesGuard)
-  @Roles('presidente')
+  @Roles('presidente', 'vice_presidente')
   @HttpCode(200)
   @ApiOperation({ summary: 'Presidente encerra inscrições do tipo (grande|pequeno)' })
   encerrarInscricoes(
@@ -58,7 +58,7 @@ export class ExpedienteController {
 
   @Post(':sessionId/inscrever')
   @UseGuards(RolesGuard)
-  @Roles('vereador')
+  @Roles('vereador', 'vice_presidente')
   @ApiOperation({ summary: 'Vereador se inscreve no expediente' })
   inscrever(
     @Param('sessionId') sessionId: string,
@@ -70,7 +70,7 @@ export class ExpedienteController {
 
   @Delete(':sessionId/cancelar/:tipo')
   @UseGuards(RolesGuard)
-  @Roles('vereador')
+  @Roles('vereador', 'vice_presidente')
   @ApiOperation({ summary: 'Vereador cancela inscrição' })
   cancelar(
     @Param('sessionId') sessionId: string,
@@ -97,7 +97,7 @@ export class ExpedienteController {
 
   @Post(':sessionId/convidado')
   @UseGuards(RolesGuard)
-  @Roles('presidente')
+  @Roles('presidente', 'vice_presidente')
   @ApiOperation({ summary: 'Presidente adiciona convidado ao expediente' })
   inscreverConvidado(
     @Param('sessionId') sessionId: string,
@@ -108,7 +108,7 @@ export class ExpedienteController {
 
   @Delete(':sessionId/convidado/:inscricaoId')
   @UseGuards(RolesGuard)
-  @Roles('presidente')
+  @Roles('presidente', 'vice_presidente')
   @HttpCode(200)
   @ApiOperation({ summary: 'Presidente remove convidado da lista' })
   removerConvidado(
@@ -122,7 +122,7 @@ export class ExpedienteController {
 
   @Post(':sessionId/liberar/:inscricaoId')
   @UseGuards(RolesGuard)
-  @Roles('presidente')
+  @Roles('presidente', 'vice_presidente')
   @ApiOperation({ summary: 'Presidente libera tempo do vereador' })
   liberarTempo(
     @Param('sessionId') sessionId: string,
@@ -133,7 +133,7 @@ export class ExpedienteController {
 
   @Post(':sessionId/ajustar')
   @UseGuards(RolesGuard)
-  @Roles('presidente')
+  @Roles('presidente', 'vice_presidente')
   @HttpCode(200)
   @ApiOperation({ summary: 'Presidente ajusta tempo (+1 ou -1 minuto)' })
   ajustar(@Param('sessionId') sessionId: string, @Body() dto: AjustarTempoDto) {
@@ -142,7 +142,7 @@ export class ExpedienteController {
 
   @Post(':sessionId/encerrar')
   @UseGuards(RolesGuard)
-  @Roles('presidente')
+  @Roles('presidente', 'vice_presidente')
   @HttpCode(200)
   @ApiOperation({ summary: 'Presidente encerra expediente ativo' })
   encerrar(@Param('sessionId') sessionId: string) {
@@ -151,7 +151,7 @@ export class ExpedienteController {
 
   @Post(':sessionId/cortar-fala')
   @UseGuards(RolesGuard)
-  @Roles('presidente')
+  @Roles('presidente', 'vice_presidente')
   @HttpCode(200)
   @ApiOperation({ summary: 'Presidente muta canal de áudio do orador atual (sem encerrar expediente)' })
   cortarFala(@Param('sessionId') sessionId: string) {
@@ -162,7 +162,7 @@ export class ExpedienteController {
 
   @Post(':sessionId/aparte/solicitar')
   @UseGuards(RolesGuard)
-  @Roles('vereador', 'secretaria')
+  @Roles('vereador', 'vice_presidente', 'secretaria')
   @HttpCode(200)
   @ApiOperation({ summary: 'Vereador solicita aparte' })
   solicitarAparte(
@@ -174,7 +174,7 @@ export class ExpedienteController {
 
   @Delete(':sessionId/aparte/cancelar')
   @UseGuards(RolesGuard)
-  @Roles('vereador', 'secretaria')
+  @Roles('vereador', 'vice_presidente', 'secretaria')
   @ApiOperation({ summary: 'Vereador cancela solicitação de aparte' })
   cancelarAparte(
     @Param('sessionId') sessionId: string,
@@ -185,7 +185,7 @@ export class ExpedienteController {
 
   @Post(':sessionId/aparte/aceitar/:userId')
   @UseGuards(RolesGuard)
-  @Roles('presidente')
+  @Roles('presidente', 'vice_presidente')
   @HttpCode(200)
   @ApiOperation({ summary: 'Presidente aceita aparte de um vereador' })
   aceitarAparte(
@@ -197,7 +197,7 @@ export class ExpedienteController {
 
   @Post(':sessionId/aparte/encerrar')
   @UseGuards(RolesGuard)
-  @Roles('presidente')
+  @Roles('presidente', 'vice_presidente')
   @HttpCode(200)
   @ApiOperation({ summary: 'Presidente encerra aparte ativo' })
   encerrarAparte(@Param('sessionId') sessionId: string) {

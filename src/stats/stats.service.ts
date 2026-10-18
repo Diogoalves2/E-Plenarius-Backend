@@ -36,7 +36,7 @@ export class StatsService {
          FROM session_presences sp
          JOIN sessions s ON sp."sessionId" = s.id
          JOIN users u ON sp."userId" = u.id
-         WHERE s."chamberId" = $1 AND u.role IN ('vereador', 'presidente')
+         WHERE s."chamberId" = $1 AND u.role IN ('vereador', 'presidente', 'vice_presidente')
          GROUP BY u.id, u.name, u.initials, u.party, u."avatarUrl"
          ORDER BY presence_count DESC
          LIMIT 5`,

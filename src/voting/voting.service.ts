@@ -17,7 +17,7 @@ import { decide, presidentMayVote } from '../common/legislative';
 import { ChambersService } from '../chambers/chambers.service';
 import { LoginAttemptsService } from '../common/access/login-attempts.service';
 
-const VOTER_ROLES = ['vereador', 'presidente'];
+const VOTER_ROLES = ['vereador', 'presidente', 'vice_presidente'];
 
 /**
  * Integridade da votação:
@@ -43,11 +43,24 @@ export class VotingService {
     private readonly attempts: LoginAttemptsService,
   ) {}
 
+  /**
+   * Quem preside a sessão: o presidente, se presente; na ausência dele, o vice-presidente presente.
+   * A regra regimental de voto do presidente (só desempate etc.) vale para quem preside.
+   */
+  private async presidingUserId(m: EntityManager, sessionId: string): Promise<string | null> {
+    const rows: { id: string; role: string }[] = await m.query(
+      `SELECT u.id, u.role FROM session_presences p JOIN users u ON u.id = p."userId"
+        WHERE p."sessionId" = $1 AND u.role IN ('presidente', 'vice_presidente')`,
+      [sessionId],
+    );
+    return (rows.find(r => r.role === 'presidente') ?? rows.find(r => r.role === 'vice_presidente'))?.id ?? null;
+  }
+
   /** Vereadores + presidente com presença confirmada na sessão. */
   async countPresentMembers(sessionId: string): Promise<number> {
     const [{ n }] = await this.dataSource.query(
       `SELECT COUNT(*)::int AS n FROM session_presences p JOIN users u ON u.id = p."userId"
-        WHERE p."sessionId" = $1 AND u.role IN ('vereador', 'presidente')`,
+        WHERE p."sessionId" = $1 AND u.role IN ('vereador', 'presidente', 'vice_presidente')`,
       [sessionId],
     );
     return n;
@@ -143,12 +156,12 @@ export class VotingService {
       // Empate em maioria simples: se o regimento reserva o voto do presidente ao desempate,
       // ele precisa votar antes de encerrar.
       if (decision.tie && rules.presidentVoteRule !== 'always') {
-        const presidentVoted = votes.some(v => v.user?.role === 'presidente');
-        if (!presidentVoted) {
+        const presiding = await this.presidingUserId(m, item.sessionId);
+        if (presiding && !votes.some(v => v.userId === presiding)) {
           throw new ConflictException({
             statusCode: 409,
             code: 'TIE_NEEDS_PRESIDENT',
-            message: `Empate (${yes} a ${no}). Pelo regimento, o presidente deve votar para desempatar antes de encerrar.`,
+            message: `Empate (${yes} a ${no}). Pelo regimento, quem preside a sessão deve votar para desempatar antes de encerrar.`,
           });
         }
       }
@@ -236,11 +249,12 @@ export class VotingService {
         });
         if (!presence) throw new ForbiddenException('Confirme sua presença na sessão antes de votar');
 
-        if (user.role === 'presidente'
+        if (rules.presidentVoteRule !== 'always'
+          && (await this.presidingUserId(m, item.sessionId)) === user.id
           && !presidentMayVote(rules.presidentVoteRule, item.majority ?? 'simples', item.votesYes ?? 0, item.votesNo ?? 0)) {
           throw new ForbiddenException(rules.presidentVoteRule === 'tie_only'
-            ? 'Pelo regimento, o presidente só vota em caso de empate.'
-            : 'Pelo regimento, o presidente só vota para desempatar ou em matérias de maioria absoluta/2/3.');
+            ? 'Pelo regimento, quem preside a sessão só vota em caso de empate.'
+            : 'Pelo regimento, quem preside a sessão só vota para desempatar ou em matérias de maioria absoluta/2/3.');
         }
 
         const votes = m.getRepository(Vote);

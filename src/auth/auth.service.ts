@@ -97,7 +97,7 @@ export class AuthService {
     const user = await this.usersService.findByIdWithPin(dto.userId);
     if (!user) throw new UnauthorizedException('Usuário não encontrado');
     if (!user.isActive) throw new ForbiddenException('Conta desativada');
-    if (user.role !== 'vereador' && user.role !== 'presidente') {
+    if (!['vereador', 'presidente', 'vice_presidente'].includes(user.role)) {
       throw new ForbiddenException('Acesso ao app restrito a vereadores e presidente');
     }
     if (!user.pinHash) {

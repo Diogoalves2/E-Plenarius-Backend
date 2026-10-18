@@ -12,7 +12,7 @@ import {
 import * as bcrypt from 'bcryptjs';
 import { Chamber } from '../../chambers/entities/chamber.entity';
 
-export type UserRole = 'superadmin' | 'presidente' | 'vereador' | 'secretaria';
+export type UserRole = 'superadmin' | 'presidente' | 'vice_presidente' | 'vereador' | 'secretaria';
 
 @Entity('users')
 export class User {

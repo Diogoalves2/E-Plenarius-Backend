@@ -26,8 +26,8 @@ export class CreateUserDto {
   @MinLength(6)
   password: string;
 
-  @ApiProperty({ enum: ['presidente', 'vereador', 'secretaria'], default: 'vereador' })
-  @IsEnum(['presidente', 'vereador', 'secretaria'])
+  @ApiProperty({ enum: ['presidente', 'vice_presidente', 'vereador', 'secretaria'], default: 'vereador' })
+  @IsEnum(['presidente', 'vice_presidente', 'vereador', 'secretaria'])
   role: UserRole;
 
   @ApiPropertyOptional({ example: 'Vereador' })

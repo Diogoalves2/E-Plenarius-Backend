@@ -13,8 +13,8 @@ export class UpdateUserDto {
   @ApiPropertyOptional({ nullable: true }) @IsOptional() @IsString()
   username?: string | null;
 
-  @ApiPropertyOptional({ enum: ['presidente', 'vereador', 'secretaria'] })
-  @IsOptional() @IsIn(['presidente', 'vereador', 'secretaria'])
+  @ApiPropertyOptional({ enum: ['presidente', 'vice_presidente', 'vereador', 'secretaria'] })
+  @IsOptional() @IsIn(['presidente', 'vice_presidente', 'vereador', 'secretaria'])
   role?: UserRole;
 
   @ApiPropertyOptional({ nullable: true }) @IsOptional() @IsString()

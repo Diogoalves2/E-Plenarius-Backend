@@ -68,7 +68,7 @@ export class SessionsController {
 
   @Patch(':id/start')
   @UseGuards(RolesGuard)
-  @Roles('presidente')
+  @Roles('presidente', 'vice_presidente')
   @ApiOperation({ summary: 'Iniciar sessão' })
   async start(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: any) {
     await this.access.assertSession(user, id);
@@ -77,7 +77,7 @@ export class SessionsController {
 
   @Patch(':id/end')
   @UseGuards(RolesGuard)
-  @Roles('presidente')
+  @Roles('presidente', 'vice_presidente')
   @ApiOperation({ summary: 'Encerrar sessão' })
   async end(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: any) {
     await this.access.assertSession(user, id);
@@ -86,7 +86,7 @@ export class SessionsController {
 
   @Patch(':id/phase')
   @UseGuards(RolesGuard)
-  @Roles('presidente')
+  @Roles('presidente', 'vice_presidente')
   @ApiOperation({ summary: 'Mudar a fase do roteiro da sessão' })
   async setPhase(@Param('id', ParseUUIDPipe) id: string, @Body() body: SetPhaseDto, @CurrentUser() user: any) {
     await this.access.assertSession(user, id);
@@ -102,7 +102,7 @@ export class SessionsController {
 
   @Patch(':id/stream')
   @UseGuards(RolesGuard)
-  @Roles('presidente')
+  @Roles('presidente', 'vice_presidente')
   @ApiOperation({ summary: 'Atualizar dados da transmissão (YouTube)' })
   async updateStream(
     @Param('id', ParseUUIDPipe) id: string,

@@ -159,6 +159,33 @@ const tClosed = (await call('PATCH', `/voting/close/${tItem.id}`, { token: pA.ac
 ok(tClosed.status === 'aprovado' && tClosed.votesYes === 2, 'aprovado 2x1 após desempate');
 ok((await call('GET', `/voting/item/${tItem.id}/verify`, { token: pA.accessToken })).data.valid === true, 'verificação com maioria/requiredVotes no hash: íntegra');
 
+console.log('\n[vice-presidente]');
+const vp = (await call('POST', '/users', { token: pA.accessToken, body: { chamberId: chA, name: 'Vice Alfa', email: 'vp@t.com', password: 'senhaVice123', role: 'vice_presidente' } })).data;
+ok(vp?.role === 'vice_presidente', 'presidente cadastra vice-presidente');
+const wVp = await login('vp@t.com', 'senhaVice123');
+ok(!!wVp?.accessToken, 'vice entra no painel');
+ok((await call('PATCH', `/chambers/${chA}/settings`, { token: wVp.accessToken, body: { totalSeats: 7 } })).status === 403, 'vice não altera regras do regimento');
+ok((await call('POST', '/users', { token: wVp.accessToken, body: { chamberId: chA, name: 'X', email: 'x2@t.com', password: 'senhaX12345', role: 'vereador' } })).status === 403, 'vice não cadastra membros');
+ok((await call('POST', '/sessions', { token: wVp.accessToken, body: { chamberId: chA, number: 5, type: 'ordinaria', date: '2026-10-18' } })).status === 403, 'vice não cria sessão');
+await call('POST', `/sessions/${sess.id}/presence`, { token: wVp.accessToken });
+ok((await call('DELETE', '/sessions/leave', { token: pA.accessToken })).status === 200, 'presidente sai da sessão (vice passa a presidir)');
+const vItem = (await agendaItem({ title: 'Vice preside' })).data;
+ok((await call('PATCH', `/voting/open/${vItem.id}`, { token: wVp.accessToken })).status === 200, 'vice abre votação');
+await call('POST', '/voting/cast', { token: w2.accessToken, body: { agendaItemId: vItem.id, choice: 'sim' } });
+const vpEarly = await call('POST', '/voting/cast', { token: wVp.accessToken, body: { agendaItemId: vItem.id, choice: 'sim' } });
+ok(vpEarly.status === 403 && /quem preside/.test(vpEarly.data?.message), 'vice presidindo segue a regra do desempate', vpEarly.data?.message);
+await call('POST', '/voting/cast', { token: w3.accessToken, body: { agendaItemId: vItem.id, choice: 'nao' } });
+const vTie = await call('PATCH', `/voting/close/${vItem.id}`, { token: wVp.accessToken });
+ok(vTie.status === 409 && vTie.data?.code === 'TIE_NEEDS_PRESIDENT', 'empate exige voto de quem preside (vice)');
+ok((await call('POST', '/voting/cast', { token: wVp.accessToken, body: { agendaItemId: vItem.id, choice: 'nao' } })).status === 201, 'vice desempata');
+ok((await call('PATCH', `/voting/close/${vItem.id}`, { token: wVp.accessToken })).data?.status === 'rejeitado', 'vice encerra a votação (rejeitado 1x2)');
+ok((await call('PATCH', `/sessions/${sess.id}/phase`, { token: wVp.accessToken, body: { phase: 'ordem_do_dia' } })).status === 200, 'vice conduz o roteiro');
+ok((await call('POST', `/sessions/${sess.id}/presence`, { token: pA.accessToken })).status === 201, 'presidente volta à sessão');
+const vItem2 = (await agendaItem({ title: 'Vice vota como membro' })).data;
+await call('PATCH', `/voting/open/${vItem2.id}`, { token: pA.accessToken });
+ok((await call('POST', '/voting/cast', { token: wVp.accessToken, body: { agendaItemId: vItem2.id, choice: 'sim' } })).status === 201, 'com o presidente presente, vice vota normalmente');
+await call('PATCH', `/voting/close/${vItem2.id}`, { token: pA.accessToken });
+
 await call('PATCH', `/chambers/${chA}/settings`, { token: pA.accessToken, body: { requirePinToVote: true } });
 const pItem = (await agendaItem({ title: 'PIN' })).data;
 await call('PATCH', `/voting/open/${pItem.id}`, { token: pA.accessToken });

@@ -37,7 +37,7 @@ export class TransparencyService {
               (SELECT COUNT(*)::int FROM s) AS sessoes,
               (SELECT COUNT(*)::int FROM session_presences p WHERE p."userId" = u.id AND p."sessionId" IN (SELECT id FROM s)) AS presencas
          FROM users u
-        WHERE u."chamberId" = $1 AND u.role IN ('vereador', 'presidente') AND u."isActive" = true
+        WHERE u."chamberId" = $1 AND u.role IN ('vereador', 'presidente', 'vice_presidente') AND u."isActive" = true
           ${userId ? 'AND u.id = $2' : ''}
         ORDER BY u.name`,
       userId ? [chamberId, userId] : [chamberId],

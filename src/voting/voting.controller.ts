@@ -20,7 +20,7 @@ export class VotingController {
 
   @Patch('open/:agendaItemId')
   @UseGuards(RolesGuard)
-  @Roles('presidente')
+  @Roles('presidente', 'vice_presidente')
   @ApiOperation({ summary: 'Abrir votação (presidente)' })
   async openVoting(@Param('agendaItemId', ParseUUIDPipe) id: string, @CurrentUser() user: any) {
     await this.access.assertAgendaItem(user, id);
@@ -29,7 +29,7 @@ export class VotingController {
 
   @Patch('close/:agendaItemId')
   @UseGuards(RolesGuard)
-  @Roles('presidente')
+  @Roles('presidente', 'vice_presidente')
   @ApiOperation({ summary: 'Encerrar votação (presidente)' })
   async closeVoting(@Param('agendaItemId', ParseUUIDPipe) id: string, @CurrentUser() user: any) {
     await this.access.assertAgendaItem(user, id);
