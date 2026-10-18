@@ -115,6 +115,21 @@ export class AtaService {
 
     const integrity = await this.audit.verifyChain(session.chamberId);
 
+    // Anexo: degravação integral aprovada (texto revisado pelo secretário)
+    const [rec] = await q(
+      `SELECT id, "approvedAt", "transcriptHash" FROM session_recordings
+        WHERE "sessionId" = $1 AND status = 'aprovado' ORDER BY "approvedAt" DESC LIMIT 1`,
+      [sessionId],
+    );
+    const degravacao = rec ? {
+      aprovadaEm: rec.approvedAt,
+      hash: rec.transcriptHash,
+      trechos: (await q(
+        `SELECT "startSec", speaker, COALESCE("editedText", text) AS text FROM transcript_segments
+          WHERE "recordingId" = $1 ORDER BY idx`, [rec.id],
+      )).map((s: any) => ({ inicioSeg: Math.round(s.startSec), orador: s.speaker, texto: s.text })),
+    } : null;
+
     const doc = {
       sessao: {
         id: session.id, number: session.number, type: session.type, date: session.date,
@@ -130,6 +145,7 @@ export class AtaService {
       roteiro,
       falas,
       votacoes,
+      degravacao,
     };
     // Hash só do conteúdo da sessão: estável depois do encerramento (a verificação da cadeia
     // de auditoria muda conforme novas sessões são registradas, por isso fica de fora).

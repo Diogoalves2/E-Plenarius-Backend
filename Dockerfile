@@ -9,6 +9,8 @@ RUN npm run build && npm prune --omit=dev
 
 # ── runtime ────────────────────────────────────────────
 FROM node:22-alpine
+# ffmpeg: degravação (normalização, detecção de pausas e corte do áudio da sessão)
+RUN apk add --no-cache ffmpeg
 ENV NODE_ENV=production \
     UPLOADS_DIR=/app/uploads \
     PORT=3001

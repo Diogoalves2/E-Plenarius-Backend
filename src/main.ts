@@ -3,6 +3,7 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import { ValidationPipe, Logger, ExceptionFilter, ArgumentsHost, Catch, HttpException, HttpStatus } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { join } from 'path';
+import { raw } from 'express';
 import { mkdirSync } from 'fs';
 import { AppModule } from './app.module';
 
@@ -55,6 +56,8 @@ async function bootstrap() {
     }
     next();
   });
+  // Partes da gravação da sessão chegam como binário (20 MB cada, abaixo do limite do Nginx).
+  app.use('/api/recordings', raw({ type: 'application/octet-stream', limit: '21mb' }));
   app.useStaticAssets(uploadsDir, {
     prefix: '/uploads',
     setHeaders: (res, filePath) => {

@@ -20,6 +20,7 @@ import { StatsModule } from './stats/stats.module';
 import { RegimentoModule } from './regimento/regimento.module';
 import { DevicesModule } from './devices/devices.module';
 import { TransparencyModule } from './transparency/transparency.module';
+import { RecordingsModule } from './recordings/recordings.module';
 
 @Module({
   imports: [
@@ -82,6 +83,7 @@ import { TransparencyModule } from './transparency/transparency.module';
     RegimentoModule,
     DevicesModule,
     TransparencyModule,
+    RecordingsModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: HttpThrottlerGuard }, DatabaseIntegrityService],

@@ -49,6 +49,9 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: ffmpeg (degravação)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null && ffmpeg -version | head -1
+
       - run: npm ci
       - run: npx tsc --noEmit -p tsconfig.json
       - run: npm run build
@@ -63,6 +66,7 @@ jobs:
           JWT_REFRESH_SECRET: ci-only-refresh-secret-not-used-anywhere-else
           FRONTEND_URL: http://localhost:3000
           UPLOADS_DIR: /tmp/uploads
+          TRANSCRIPTION_PROVIDER: fake
         run: |
           nohup node dist/main.js > api.log 2>&1 &
           for i in $(seq 1 30); do curl -sf http://127.0.0.1:3001/api/health && exit 0; sleep 2; done

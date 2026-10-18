@@ -236,6 +236,54 @@ ok(lateState.counts === null && lateState.item?.votesYes === null && lateState.t
 ok(sClosed?.counts?.nao === 1 && /^[0-9a-f]{64}$/.test(sClosed?.resultHash ?? ''), 'voting:closed revela placar + resultHash');
 sock.close(); late.close();
 
+console.log('\n[degravação]');
+{
+  const { tmpdir } = await import('node:os');
+  const { readFileSync } = await import('node:fs');
+  // E2E_FFMPEG/E2E_TMP permitem gerar o áudio com o ffmpeg de um container (host sem ffmpeg)
+  const wav = `${process.env.E2E_TMP ?? tmpdir()}/e2e-sessao.wav`;
+  // 15 s: 3 s de "fala" (tom) + 2 s de silêncio, três vezes → 2 trechos após o corte nas pausas
+  execSync(`${process.env.E2E_FFMPEG ?? 'ffmpeg'} -y -loglevel error -f lavfi -i "aevalsrc='if(lt(mod(t,5),3),0.5*sin(2*PI*440*t),0)':s=16000:d=15" -ac 1 "${wav}"`);
+  const audio = readFileSync(wav);
+  ok((await call('POST', `/sessions/${sess.id}/recordings`, { token: mob.accessToken, body: { fileName: 'sessao.wav', sizeBytes: audio.length } })).status === 403,
+    'vereador comum não envia gravação');
+  ok((await call('POST', `/sessions/${sess.id}/recordings`, { token: pB.accessToken, body: { fileName: 'sessao.wav', sizeBytes: audio.length } })).status === 403,
+    'presidente de outra câmara não envia gravação');
+  ok((await call('POST', `/sessions/${sess.id}/recordings`, { token: pA.accessToken, body: { fileName: 'sessao.exe', sizeBytes: 10 } })).status === 400,
+    'formato não suportado recusado');
+  const w3b = w3; // v3 é o 1º Secretário(a) da Mesa
+  const rec = (await call('POST', `/sessions/${sess.id}/recordings`, { token: w3b.accessToken, body: { fileName: 'sessao.wav', sizeBytes: audio.length } })).data;
+  ok(rec?.id && rec.partsTotal === 1, '1º Secretário inicia o envio da gravação');
+  const part = await fetch(`${B}/recordings/${rec.id}/parts/0`, {
+    method: 'PUT', headers: { Authorization: `Bearer ${w3b.accessToken}`, 'Content-Type': 'application/octet-stream' }, body: audio,
+  });
+  ok(part.status === 200, 'parte enviada', String(part.status));
+  ok((await call('POST', `/recordings/${rec.id}/complete`, { token: w3b.accessToken })).status === 200, 'envio concluído');
+  let det;
+  for (let i = 0; i < 60; i++) {
+    det = (await call('GET', `/recordings/${rec.id}`, { token: pA.accessToken })).data;
+    if (['transcrito', 'erro'].includes(det.status)) break;
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  ok(det.status === 'transcrito' && det.segments.length === 2, 'áudio cortado nas pausas e transcrito (2 trechos)', `${det.status} ${det.error ?? ''} ${det.segments?.length}`);
+  ok(det.segments[0].startSec === 0 && det.segments[1].startSec > 8 && det.segments[1].startSec < 10, 'trechos com tempo de início correto',
+    det.segments.map(s => s.startSec.toFixed(1)).join(','));
+  ok(/^\/uploads\/recordings\/[0-9a-f]{32}\.mp3$/.test(det.audioUrl) && (await fetch(`${WS}${det.audioUrl}`)).status === 200, 'áudio de revisão disponível');
+  ok((await call('GET', `/recordings/${rec.id}`, { token: pB.accessToken })).status === 403, 'outra câmara não lê a degravação');
+  const early = await call('POST', `/recordings/${rec.id}/approve`, { token: pA.accessToken });
+  ok(early.status === 400 && /conferência/.test(early.data?.message), 'não aprova com trechos marcados sem revisão', early.data?.message);
+  await call('PATCH', `/recordings/${rec.id}/segments/${det.segments[0].id}`, { token: w3b.accessToken, body: { text: 'Texto corrigido pelo secretário.', speaker: 'Ver 1' } });
+  await call('PATCH', `/recordings/${rec.id}/segments/${det.segments[1].id}`, { token: w3b.accessToken, body: { reviewed: true } });
+  const appr = await call('POST', `/recordings/${rec.id}/approve`, { token: w3b.accessToken });
+  ok(appr.status === 200 && /^[0-9a-f]{64}$/.test(appr.data?.transcriptHash), 'degravação aprovada com hash');
+  ok((await call('PATCH', `/recordings/${rec.id}/segments/${det.segments[0].id}`, { token: w3b.accessToken, body: { text: 'x' } })).status === 409, 'aprovada não pode ser editada');
+  const ataD = (await call('GET', `/sessions/${sess.id}/ata`)).data;
+  ok(ataD.degravacao?.hash === appr.data.transcriptHash && ataD.degravacao.trechos[0].texto === 'Texto corrigido pelo secretário.'
+    && ataD.degravacao.trechos[0].orador === 'Ver 1', 'ata traz a degravação aprovada como anexo');
+  const audD = (await call('GET', `/audit/session/${sess.id}`, { token: pA.accessToken })).data;
+  ok(audD.some(a => a.action === 'degravacao:aprovada'), 'aprovação registrada na auditoria');
+}
+
 console.log('\n[imutabilidade + detecção de adulteração]');
 const up = psql(`UPDATE votes SET choice='nao' WHERE "agendaItemId"='${item2.id}'`);
 ok(up.err && /imutável/.test(up.err), 'UPDATE em votes bloqueado pelo banco');

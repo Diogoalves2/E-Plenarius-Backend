@@ -56,6 +56,10 @@ services:
       TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
       SWAGGER_ENABLED: ${SWAGGER_ENABLED:-false}
       UPLOADS_DIR: /app/uploads
+      # Degravação: chave da OpenAI fica só no .env.prod da VPS
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      TRANSCRIPTION_PROVIDER: ${TRANSCRIPTION_PROVIDER:-openai}
+      TRANSCRIPTION_MODEL: ${TRANSCRIPTION_MODEL:-gpt-transcribe}
     volumes:
       - uploads:/app/uploads
     # Endurecimento: FS só leitura (exceto uploads e /tmp), sem capabilities, sem escalada.
