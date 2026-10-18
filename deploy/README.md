@@ -97,3 +97,11 @@ docker compose -p eplenarius-test -f docker-compose.test.yml --env-file .env.tes
   suba `runtimeVersion` no `app.json`, gere APK (`scripts/build-apk.sh`, que regrava `ota-native-lock.json`) e instale nos tablets.
 - Cópia da chave privada de assinatura: `C:\Users\Diogo Alves\.eplenarius-ota\private-key.pem` (guardar também em cofre de senhas).
 - Log: `/var/log/eplenarius-ota.log`.
+
+## Degravação (transcrição do áudio das sessões)
+
+- Chave da OpenAI em `/srv/sites/eplenarius/.env.prod`: `OPENAI_API_KEY=sk-...` (nunca no repositório).
+  Depois: `docker compose -p eplenarius -f docker-compose.prod.yml --env-file .env.prod up -d api`.
+- Opcional: `TRANSCRIPTION_MODEL=whisper-1` (devolve confiança por trecho; padrão `gpt-transcribe`, mais preciso).
+- Áudio de trabalho (MP3 mono) fica em `uploads/recordings/` (entra no backup diário). O original enviado é apagado após a conversão.
+- Processamento é sequencial (um por vez) para não sobrecarregar a VPS compartilhada.
