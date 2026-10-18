@@ -84,3 +84,16 @@ docker compose -p eplenarius-test -f docker-compose.test.yml --env-file .env.tes
   Log: `/var/log/eplenarius-watchdog.log` (só eventos).
 - **Uptime externo** ([.github/workflows/uptime.yml](../.github/workflows/uptime.yml), a cada 15 min): API + frontend.
   Falha → e-mail do GitHub. Repositório público sem commits por 60 dias desativa o agendamento.
+
+## Atualizações OTA do app mobile
+
+- **Servidas** pelo Nginx em `/updates/` a partir de `/srv/sites/eplenarius-updates/<runtime>/android/` (`current` → versão ativa; mantém 5).
+  `GET /updates/manifest` (headers `expo-runtime-version`, `expo-platform`) devolve o manifesto **pré-assinado**; sem atualização → 204.
+- **Publicadas** pelo workflow `App OTA` do repo mobile (push no `master` com mudança em `app/`, `src/`, `assets/`…):
+  `scripts/ota.mjs build` exporta o JS, assina com `OTA_PRIVATE_KEY` (segredo do GitHub) e envia por SSH para
+  `/usr/local/sbin/eplenarius-ota-install` (forced command; chave só publica OTA, não faz deploy do backend).
+- **A VPS não tem a chave de assinatura**: o app só aplica manifesto assinado pelo `certs/certificate.pem` embutido no APK.
+- **Mudança nativa** (dependência `expo-*`/`react-native*`, `app.json`, certificado) é bloqueada no build da OTA:
+  suba `runtimeVersion` no `app.json`, gere APK (`scripts/build-apk.sh`, que regrava `ota-native-lock.json`) e instale nos tablets.
+- Cópia da chave privada de assinatura: `C:\Users\Diogo Alves\.eplenarius-ota\private-key.pem` (guardar também em cofre de senhas).
+- Log: `/var/log/eplenarius-ota.log`.
