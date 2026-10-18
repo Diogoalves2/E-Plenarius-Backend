@@ -9,21 +9,37 @@
 | Nginx | `/etc/nginx/sites-available/eplenarius` (Certbot) |
 | Segredos | `/srv/sites/eplenarius/.env.prod` (gerado na VPS, chmod 600) |
 | Superadmin | `/root/sites/eplenarius-admin.txt` |
-| Backup | cron 03:15 → `/srv/sites/eplenarius/backups` (14 dias) |
+| Backup | cron 03:15 `/usr/local/sbin/eplenarius-backup` → `/srv/sites/eplenarius/backups` (14 dias) |
 | Frontend | Vercel `e-plenarius-frontend`, env `NEXT_PUBLIC_API_URL` |
 
-## Atualizar o backend
+## Atualizar o backend (automático)
+
+Push no `master` → GitHub Actions ([.github/workflows/ci-cd.yml](../.github/workflows/ci-cd.yml)):
+
+1. **test** — `npm ci`, typecheck, build, sobe a API com Postgres descartável e roda
+   `test/e2e.mjs` (isolamento, tablets, voto secreto, imutabilidade, tokens, socket).
+2. **deploy** (só se o teste passar) — envia por SSH apenas o código da API para
+   `/usr/local/sbin/eplenarius-deploy`, que: faz backup → guarda imagem e código atuais →
+   build → sobe → espera `/api/health`. Falhou? volta imagem **e** código anteriores sozinho.
+
+Coluna/tabela nova em entidade: rodar o workflow manualmente (Actions → Backend CI/CD →
+Run workflow) com **Sincronizar schema** marcado.
+
+| Peça | Onde | Quem altera |
+|---|---|---|
+| Código da API (`src`, `scripts`, `package*.json`, `Dockerfile`) | repo | push no `master` |
+| `docker-compose.prod.yml`, `.env.prod`, nginx | `/srv/sites/eplenarius`, `/etc/nginx` | admin via SSH |
+| `eplenarius-deploy`, `eplenarius-backup` | `/usr/local/sbin` (cópias em `deploy/`) | admin via SSH |
+| Chave do GitHub | `authorized_keys` com `command=...,restrict` | só roda o script de deploy |
+
+Segredos do repo: `VPS_SSH_KEY`, `VPS_HOST`, `VPS_KNOWN_HOSTS`. Log: `/var/log/eplenarius-deploy.log`.
+
+Alterou `deploy/eplenarius-deploy.sh` ou `deploy/backup.sh` no repo? Instale manualmente:
 
 ```bash
-# da pasta backend/, no Windows (Git Bash)
-tar czf - --exclude=node_modules --exclude=dist --exclude=uploads --exclude=.git \
-  --exclude='.env' --exclude='.env.*' --exclude=backups --exclude=docker-compose.yml . \
-  | ssh emas 'tar xzf - -C /srv/sites/eplenarius'
-ssh emas 'cd /srv/sites/eplenarius && docker compose -p eplenarius -f docker-compose.prod.yml --env-file .env.prod up -d --build api'
+scp deploy/eplenarius-deploy.sh emas:/tmp/d && ssh emas 'install -m 755 /tmp/d /usr/local/sbin/eplenarius-deploy'
+scp deploy/backup.sh emas:/tmp/b && ssh emas 'install -m 700 /tmp/b /usr/local/sbin/eplenarius-backup'
 ```
-
-Mudou entidade (coluna nova)? Rodar uma vez com `DB_SYNCHRONIZE=true` no `.env.prod`, subir, e voltar para `false`
-(faça backup antes: `./deploy/backup.sh`).
 
 ## Restaurar dump
 

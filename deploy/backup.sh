@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Backup diário do banco + uploads. Cron (root):
-#   15 3 * * * /opt/eplenarius/backend/deploy/backup.sh >> /var/log/eplenarius-backup.log 2>&1
+# Backup diário do banco + uploads. Instalado na VPS em /usr/local/sbin/eplenarius-backup
+# (fora do alcance do deploy automático). Cron (root):
+#   15 3 * * * /usr/local/sbin/eplenarius-backup >> /var/log/eplenarius-backup.log 2>&1
 set -euo pipefail
 umask 077
-cd "$(dirname "$0")/.."
+cd /srv/sites/eplenarius
 set -a; . ./.env.prod; set +a
 
 STAMP=$(date +%Y%m%d-%H%M)

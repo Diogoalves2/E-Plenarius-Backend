@@ -1,0 +1,118 @@
+name: Backend CI/CD
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      sync_schema:
+        description: 'Sincronizar schema do banco (entidade mudou: coluna/tabela nova)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Build + testes E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: eplenarius
+          POSTGRES_USER: eplenarius
+          POSTGRES_PASSWORD: ci_password
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U eplenarius"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_NAME: eplenarius
+      DB_USER: eplenarius
+      DB_PASSWORD: ci_password
+      DB_SSL: 'false'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+      - run: npx tsc --noEmit -p tsconfig.json
+      - run: npm run build
+      - run: npm install --no-save socket.io-client@4.8.1
+
+      - name: Subir API (banco descartável do CI)
+        env:
+          NODE_ENV: production
+          PORT: 3001
+          DB_SYNCHRONIZE: 'true'
+          JWT_SECRET: ci-only-access-secret-not-used-anywhere-else
+          JWT_REFRESH_SECRET: ci-only-refresh-secret-not-used-anywhere-else
+          FRONTEND_URL: http://localhost:3000
+          UPLOADS_DIR: /tmp/uploads
+        run: |
+          nohup node dist/main.js > api.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:3001/api/health && exit 0; sleep 2; done
+          cat api.log; exit 1
+
+      - name: Testes E2E (segurança + votação)
+        env:
+          E2E_API: http://127.0.0.1:3001/api
+          E2E_PSQL: psql postgresql://eplenarius:ci_password@localhost:5432/eplenarius
+        run: |
+          node scripts/create-superadmin.js ci@test.local "CI Superadmin" ci-superadmin-pass
+          node test/e2e.mjs ci@test.local ci-superadmin-pass
+
+      - name: Log da API (falha)
+        if: failure()
+        run: cat api.log
+
+  deploy:
+    name: Deploy na VPS
+    needs: test
+    if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configurar SSH
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Enviar código e publicar
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          SYNC: ${{ github.event.inputs.sync_schema == 'true' && 'deploy-sync' || 'deploy' }}
+        run: |
+          # Só o código da API: compose, .env e scripts de infra ficam na VPS.
+          tar czf - Dockerfile .dockerignore package.json package-lock.json tsconfig.json nest-cli.json src scripts \
+            | ssh -i ~/.ssh/deploy_key -o BatchMode=yes -o StrictHostKeyChecking=yes \
+                "root@$VPS_HOST" "$SYNC $GITHUB_SHA"
+
+      - name: Verificar produção
+        run: |
+          curl -sf --retry 5 --retry-delay 3 https://eplenarius.2-25-152-184.sslip.io/api/health
+
+      - name: Limpar chave
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
