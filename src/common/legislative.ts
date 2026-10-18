@@ -72,8 +72,9 @@ export function presidentMayVote(rule: PresidentVoteRule, majority: Majority, ye
  */
 export function mesaRank(u: { role?: string | null; title?: string | null }): number {
   if (u.role === 'presidente') return 0;
-  if (u.role === 'vice_presidente') return 1;
   const t = (u.title ?? '').trim();
+  // Pelo perfil ou pelo cargo informado (cadastros antigos têm o cargo só no texto)
+  if (u.role === 'vice_presidente' || /^vice[\s-]*presidente/i.test(t)) return 1;
   if (/^1\s*[º°o.]?\s*secret/i.test(t)) return 2;
   if (/^2\s*[º°o.]?\s*secret/i.test(t)) return 3;
   return u.role === 'vereador' ? 4 : 5;
