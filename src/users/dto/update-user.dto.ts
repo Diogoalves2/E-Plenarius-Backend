@@ -37,11 +37,11 @@ export class ChangePasswordDto {
   @ApiProperty() @IsString()
   currentPassword: string;
 
-  @ApiProperty({ minLength: 6 }) @IsString() @MinLength(6)
+  @ApiProperty({ minLength: 8 }) @IsString() @MinLength(8, { message: 'A senha deve ter pelo menos 8 caracteres.' })
   newPassword: string;
 }
 
 export class AdminResetPasswordDto {
-  @ApiProperty({ minLength: 6 }) @IsString() @MinLength(6)
+  @ApiProperty({ minLength: 8 }) @IsString() @MinLength(8, { message: 'A senha deve ter pelo menos 8 caracteres.' })
   newPassword: string;
 }

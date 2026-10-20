@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Body, Param, UseGuards, BadRequestException, ForbiddenException, ParseUUIDPipe } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Body, Param, UseGuards, BadRequestException, ForbiddenException, ParseUUIDPipe, Ip } from '@nestjs/common';
 
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { UsersService } from './users.service';
@@ -9,6 +9,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Public } from '../common/decorators/public.decorator';
+import { toPublicUser } from '../common/serialize';
 
 @ApiTags('users')
 @ApiBearerAuth()
@@ -21,11 +22,11 @@ export class UsersController {
   @UseGuards(RolesGuard)
   @Roles('presidente', 'superadmin')
   @ApiOperation({ summary: 'Cadastrar vereador (presidente da câmara ou superadmin)' })
-  create(@Body() dto: CreateUserDto, @CurrentUser() actor: any) {
+  create(@Body() dto: CreateUserDto, @CurrentUser() actor: any, @Ip() ip: string) {
     if (actor.role !== 'superadmin' && dto.chamberId !== actor.chamberId) {
       throw new ForbiddenException('Só é possível cadastrar membros da sua câmara');
     }
-    return this.usersService.create(dto);
+    return this.usersService.create(dto, { id: actor.id, ip });
   }
 
   @Get('chamber/:chamberId')
@@ -36,7 +37,7 @@ export class UsersController {
     const canSeePrivate = user && (user.role === 'superadmin' || user.chamberId === chamberId);
     if (canSeePrivate) return users;
     // Visitante (telão/público): sem e-mail, username, último login.
-    return users.map(({ email, username, lastLoginAt, ...pub }) => pub);
+    return users.map(u => ({ ...toPublicUser(u), isActive: u.isActive }));
   }
 
   @Get('me')
@@ -58,9 +59,9 @@ export class UsersController {
   @UseGuards(RolesGuard)
   @Roles('presidente', 'superadmin')
   @ApiOperation({ summary: 'Editar dados de um usuário' })
-  async update(@Param('id', ParseUUIDPipe) id: string, @Body() body: UpdateUserDto, @CurrentUser() actor: any) {
+  async update(@Param('id', ParseUUIDPipe) id: string, @Body() body: UpdateUserDto, @CurrentUser() actor: any, @Ip() ip: string) {
     await this.usersService.assertCanManage(actor, id);
-    return this.usersService.updateProfile(id, body);
+    return this.usersService.updateProfile(id, body, { id: actor.id, ip });
   }
 
   @Patch('me/password')
@@ -68,8 +69,9 @@ export class UsersController {
   changePassword(
     @CurrentUser() user: any,
     @Body() body: ChangePasswordDto,
+    @Ip() ip: string,
   ) {
-    return this.usersService.changePassword(user.id, body.currentPassword, body.newPassword);
+    return this.usersService.changePassword(user.id, body.currentPassword, body.newPassword, ip);
   }
 
   @Patch(':id/reset-password')
@@ -80,9 +82,10 @@ export class UsersController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() body: AdminResetPasswordDto,
     @CurrentUser() actor: any,
+    @Ip() ip: string,
   ) {
     await this.usersService.assertCanManage(actor, id);
-    return this.usersService.adminResetPassword(id, body.newPassword);
+    return this.usersService.adminResetPassword(id, body.newPassword, { id: actor.id, ip });
   }
 
   @Patch(':id/audio-channel')
@@ -115,6 +118,7 @@ export class UsersController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() body: { pin: string | null },
     @CurrentUser() actor: any,
+    @Ip() ip: string,
   ) {
     await this.usersService.assertCanManage(actor, id);
     if (body.pin !== null && !/^\d{6}$/.test(String(body.pin))) {
@@ -123,7 +127,7 @@ export class UsersController {
     if (body.pin !== null && /^(\d)\1{5}$|^(012345|123456|234567|345678|456789|987654|876543|765432|654321|543210)$/.test(body.pin)) {
       throw new BadRequestException('PIN muito fácil (sequência ou dígitos repetidos). Escolha outro.');
     }
-    await this.usersService.setPin(id, body.pin);
+    await this.usersService.setPin(id, body.pin, { id: actor.id, ip });
     return { ok: true, hasPin: body.pin !== null };
   }
 

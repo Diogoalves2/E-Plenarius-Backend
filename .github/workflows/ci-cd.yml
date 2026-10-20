@@ -66,6 +66,7 @@ jobs:
           JWT_REFRESH_SECRET: ci-only-refresh-secret-not-used-anywhere-else
           FRONTEND_URL: http://localhost:3000
           UPLOADS_DIR: /tmp/uploads
+          AUDIT_HMAC_KEY: ci-only-hmac-key-0123456789abcdef0123456789abcdef
           TRANSCRIPTION_PROVIDER: fake
         run: |
           nohup node dist/main.js > api.log 2>&1 &

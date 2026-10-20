@@ -57,6 +57,10 @@ export class Vote {
   @Column({ nullable: true })
   chainHash: string | null;
 
+  /** HMAC(AUDIT_HMAC_KEY, chainHash): sem a chave da API não se forja um voto válido. */
+  @Column({ type: 'varchar', nullable: true })
+  seal: string | null;
+
   @Column({ nullable: true })
   ipAddress: string;
 

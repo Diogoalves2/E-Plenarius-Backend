@@ -53,16 +53,20 @@ import { RecordingsModule } from './recordings/recordings.module';
         // Prod: DATABASE_URL ou DB_*. DB_SSL=true para Postgres gerenciado
         // (Render/Neon); Postgres local da VPS roda sem SSL.
         const url = config.get('DATABASE_URL');
+        // Dia a dia: papel sem dono das tabelas (DB_APP_USER). Boot de sincronização de schema
+        // precisa do dono (DB_USER) — e é nele que as permissões do papel da API são aplicadas.
+        const sync = config.get('DB_SYNCHRONIZE') === 'true';
+        const appUser = !sync && config.get('DB_APP_USER');
         return {
           type: 'postgres',
           url,
           host: url ? undefined : config.get('DB_HOST', 'localhost'),
           port: url ? undefined : Number(config.get('DB_PORT', 5432)),
           database: url ? undefined : config.get('DB_NAME', 'eplenarius'),
-          username: url ? undefined : config.get('DB_USER', 'eplenarius'),
-          password: url ? undefined : config.get('DB_PASSWORD'),
+          username: url ? undefined : appUser || config.get('DB_USER', 'eplenarius'),
+          password: url ? undefined : appUser ? config.get('DB_APP_PASSWORD') : config.get('DB_PASSWORD'),
           entities,
-          synchronize: config.get('DB_SYNCHRONIZE') === 'true',
+          synchronize: sync,
           logging: false,
           ssl: config.get('DB_SSL') === 'true' ? { rejectUnauthorized: false } : false,
         };

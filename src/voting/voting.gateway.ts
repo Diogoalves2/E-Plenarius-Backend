@@ -10,8 +10,20 @@ import { AgendaService } from '../agenda/agenda.service';
 import { ChambersService } from '../chambers/chambers.service';
 import { maskSecretCounts } from '../common/integrity';
 
+/**
+ * Navegador só conecta a partir do painel oficial (FRONTEND_URL). App nativo e bridge não
+ * mandam Origin e seguem liberados. Lido a cada conexão (o .env pode carregar depois do import).
+ */
+function originAllowed(origin: string | undefined): boolean {
+  if (!origin) return true;
+  const list = (process.env.FRONTEND_URL ?? '').split(',').map(o => o.trim()).filter(Boolean);
+  return list.length === 0 || list.includes(origin);
+}
+
 @WebSocketGateway({
-  cors: { origin: true, credentials: true },
+  cors: { origin: (origin: string | undefined, cb: (e: Error | null, ok?: boolean) => void) => cb(null, originAllowed(origin)), credentials: true },
+  // allowRequest vale também para WebSocket puro (o navegador não aplica CORS a ele)
+  allowRequest: (req: any, cb: (err: string | null | undefined, ok: boolean) => void) => cb(null, originAllowed(req.headers.origin)),
   namespace: '/voting',
 })
 export class VotingGateway implements OnGatewayConnection, OnGatewayDisconnect {

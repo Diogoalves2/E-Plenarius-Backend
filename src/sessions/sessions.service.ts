@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { Session } from './entities/session.entity';
 import { SessionPresence } from './entities/session-presence.entity';
 import { CreateSessionDto } from './dto/create-session.dto';
+import { withPublicUser } from '../common/serialize';
 import { VotingGateway } from '../voting/voting.gateway';
 import { AuditService } from '../audit/audit.service';
 import { ChambersService } from '../chambers/chambers.service';
@@ -136,11 +137,9 @@ export class SessionsService {
     return saved;
   }
 
-  async getPresences(sessionId: string): Promise<SessionPresence[]> {
-    return this.presenceRepo.find({
-      where: { sessionId },
-      relations: ['user'],
-    });
+  async getPresences(sessionId: string) {
+    const list = await this.presenceRepo.find({ where: { sessionId }, relations: ['user'] });
+    return list.map(p => withPublicUser(p, 'user'));
   }
 
   async removePresence(sessionId: string, userId: string): Promise<void> {

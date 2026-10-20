@@ -54,6 +54,10 @@ export class AuditLog {
   @Column({ type: 'bigint', nullable: true })
   ts: string | null;
 
+  /** HMAC(AUDIT_HMAC_KEY, hash). Nulo em registros anteriores ao selo (cobertos por checkpoint). */
+  @Column({ type: 'varchar', nullable: true })
+  seal: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 }

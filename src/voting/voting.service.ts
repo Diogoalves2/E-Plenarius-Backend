@@ -14,6 +14,7 @@ import { CastVoteDto } from './dto/cast-vote.dto';
 import { VotingGateway } from './voting.gateway';
 import { canonicalJson, GENESIS_HASH, maskSecretCounts, sha256 } from '../common/integrity';
 import { decide, presidentMayVote } from '../common/legislative';
+import { seal, sealEnabled, sealMatches } from '../common/seal';
 import { ChambersService } from '../chambers/chambers.service';
 import { LoginAttemptsService } from '../common/access/login-attempts.service';
 
@@ -171,6 +172,7 @@ export class VotingService {
       item.resultExplanation = decision.explanation;
       item.votingClosedAt = new Date();
       item.resultHash = VotingService.resultHash(item, lastChainHash, votes.length);
+      item.resultSeal = seal('result', item.resultHash);
       await m.getRepository(AgendaItem).save(item);
 
       await this.auditService.log({
@@ -288,6 +290,7 @@ export class VotingService {
           seq,
           prevHash,
           chainHash,
+          seal: seal('vote', chainHash),
           ipAddress,
           deviceInfo: dto.deviceInfo,
         }));
@@ -351,7 +354,9 @@ export class VotingService {
     const votes = await this.votesRepo.find({ where: { agendaItemId }, order: { seq: 'ASC' } });
     const problems: string[] = [];
 
+    const sealOn = sealEnabled();
     let prev = GENESIS_HASH;
+    let sawSeal = false;
     votes.forEach((v, i) => {
       if (v.seq !== i + 1) problems.push(`voto ${v.id}: sequência ${v.seq}, esperado ${i + 1}`);
       if (v.prevHash !== prev) problems.push(`voto ${v.id}: encadeamento quebrado`);
@@ -359,6 +364,14 @@ export class VotingService {
         prevHash: v.prevHash ?? '', seq: v.seq ?? 0, agendaItemId: v.agendaItemId, userId: v.userId, choice: v.choice,
       });
       if (h !== v.chainHash) problems.push(`voto ${v.id}: conteúdo alterado`);
+      if (sealOn) {
+        if (v.seal) {
+          if (!sealMatches('vote', v.chainHash ?? '', v.seal)) problems.push(`voto ${v.id}: selo inválido (voto forjado)`);
+          sawSeal = true;
+        } else if (sawSeal) {
+          problems.push(`voto ${v.id}: sem selo depois de votos selados (voto forjado)`);
+        }
+      }
       prev = v.chainHash ?? '';
     });
 
@@ -376,6 +389,14 @@ export class VotingService {
       const expected = VotingService.resultHash(item, votes.length ? prev : GENESIS_HASH, votes.length);
       if (!item.resultHash) problems.push('item encerrado sem resultHash');
       else if (expected !== item.resultHash) problems.push('resultHash não confere com placar/cadeia atuais');
+      if (item.resultHash && sealOn && item.resultSeal && !sealMatches('result', item.resultHash, item.resultSeal)) {
+        problems.push('selo do resultado inválido (resultado reescrito)');
+      }
+      // O resultHash também foi gravado na auditoria (cadeia selada) no encerramento.
+      const audited = await this.auditService.closedResultHash(item.id);
+      if (audited && item.resultHash && audited !== item.resultHash) {
+        problems.push('resultHash diverge do registrado na auditoria no encerramento');
+      }
     }
 
     return {
@@ -383,6 +404,7 @@ export class VotingService {
       agendaItemId,
       totalVotes: votes.length,
       resultHash: item.resultHash ?? null,
+      sealed: sealOn && !!item.resultSeal,
       problems,
     };
   }

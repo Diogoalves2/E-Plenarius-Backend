@@ -91,6 +91,10 @@ export class AgendaItem {
   @Column({ nullable: true })
   resultHash: string | null;
 
+  /** HMAC(AUDIT_HMAC_KEY, resultHash): agenda_items é editável, o selo impede reescrever o resultado. */
+  @Column({ type: 'varchar', nullable: true })
+  resultSeal: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

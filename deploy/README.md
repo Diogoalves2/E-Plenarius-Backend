@@ -62,6 +62,18 @@ ssh emas 'docker logs -f --tail 100 eplenarius_api'
 - Tablets: o app só entra em tablet autorizado em **Tablets** no painel do presidente.
 - Nginx: rate limit `eplen_api` (30 r/s) e `eplen_auth` (30 r/min) por IP.
 - Containers: API com FS só leitura, sem capabilities, 768 MB; banco com 768 MB.
+- **Papel do banco sem dono** (`DB_APP_USER`): a API conecta com um papel que não pode desligar
+  triggers, fazer DDL nem UPDATE/DELETE em `votes`, `audit_logs`, `integrity_checkpoints`.
+  O dono (`DB_USER`) só é usado no `deploy-sync`, que também reaplica as permissões.
+- **Selo HMAC** (`AUDIT_HMAC_KEY`, só no `.env.prod`; cópia em `~/.eplenarius-ota/audit-hmac-key.txt`
+  no PC do administrador): cada registro de auditoria, voto e resultado leva um selo. O histórico
+  anterior ao selo foi coberto por um checkpoint selado (`integrity_checkpoints`). Quem tem só o
+  banco não forja registro que passe na verificação. **Não troque a chave.**
+- **Âncoras públicas**: `GET /api/public/ancoras` (último elo de cada câmara). O workflow
+  `ancoras.yml` grava uma cópia diária na branch `ancoras` do GitHub e falha se uma âncora
+  anterior deixar de bater (histórico reescrito no servidor).
+- Imagem base: o deploy usa `build --pull` (node:22-alpine sempre atualizado). Postgres:
+  `deploy/db-image-update.sh` (instalar em `/usr/local/sbin/eplenarius-db-update`, cron no 1º domingo).
 
 ## Stack de teste descartável
 
@@ -72,6 +84,7 @@ os containers de produção (já aconteceu: arquivo com CRLF fez o `sed` do nome
 sed -e 's/^name: eplenarius$/name: eplenarius-test/' -e 's/eplenarius_db/eplenarius_test_db/' \
     -e 's/eplenarius_api/eplenarius_test_api/' -e 's/backend:latest/backend:test/' \
     -e "s/API_HOST_PORT:-3010/API_HOST_PORT:-3011/" docker-compose.prod.yml > docker-compose.test.yml
+# confira antes de subir: grep -E 'name:|container_name' docker-compose.test.yml
 docker compose -p eplenarius-test -f docker-compose.test.yml --env-file .env.test up -d --build
 # ... testes em http://127.0.0.1:3011 ...
 docker compose -p eplenarius-test -f docker-compose.test.yml --env-file .env.test down -v

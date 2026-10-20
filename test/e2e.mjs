@@ -355,6 +355,66 @@ const csvTxt = await csvRes.text();
 ok(/text\/csv/.test(csvRes.headers.get('content-type')) && csvTxt.includes('sessao;data_sessao;numero'), 'dados abertos em CSV');
 ok((await fetch(`${B}/public/chambers/${chA}/dados/senhas.csv`)).status === 404, 'CSV inexistente = 404');
 
+console.log('\n[blindagem: upload, senha, auditoria de membros, socket]');
+const upload = (path, token, name, type, content) => {
+  const f = new FormData();
+  f.append('file', new Blob([content], { type }), name);
+  return fetch(B + path, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: f });
+};
+const PNG_1PX = Buffer.from('89504e470d0a1a0a0000000d4948445200000001000000010806000000'
+  + '1f15c4890000000d49444154789c63600000000200015e2a8a5f0000000049454e44ae426082', 'hex');
+ok((await upload('/upload/avatar', pA.accessToken, 'x.png', 'image/png', '<html><script>alert(1)</script></html>')).status === 400,
+  'HTML disfarçado de PNG é recusado (assinatura do arquivo)');
+const upOk = await upload('/upload/avatar', pA.accessToken, 'evil.html', 'image/png', PNG_1PX);
+const upOkD = await upOk.json();
+ok(upOk.status === 201 && /^\/uploads\/avatar_[0-9a-f]{32}\.png$/.test(upOkD.url), 'extensão salva vem do tipo validado, não do nome', JSON.stringify(upOkD));
+ok((await upload('/upload/logo', sa.accessToken, 'l.svg', 'image/svg+xml', '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"></svg>')).status === 400,
+  'SVG com evento/script recusado');
+ok((await call('POST', '/users', { token: pA.accessToken, body: { chamberId: chA, name: 'Curta', email: 'curta@t.com', password: '1234567', role: 'vereador' } })).status === 400,
+  'senha com menos de 8 caracteres recusada');
+const audA = (await call('GET', `/audit/chamber/${chA}?limit=1000`, { token: pA.accessToken })).data;
+const actsA = new Set(audA.map(a => a.action));
+ok(['user:created', 'user:pin_set', 'user:updated'].every(a => actsA.has(a)), 'cadastro, PIN e edição de membros vão para a auditoria', [...actsA].join(','));
+ok(audA.some(a => a.action === 'user:updated' && a.detail?.changes?.isActive?.para === false), 'desativação registrada com antes/depois');
+ok(audA.every(a => !a.user || !('email' in a.user)), 'auditoria não expõe e-mail dos usuários');
+const pubMembers = (await call('GET', `/users/chamber/${chA}`)).data;
+ok(pubMembers.length > 0 && pubMembers.every(u => !('email' in u) && !('username' in u)), 'lista pública de membros sem e-mail/usuário');
+const sockTry = (origin) => new Promise(r => {
+  const s = io(`${WS}/voting`, { transports: ['websocket'], reconnection: false, extraHeaders: { Origin: origin } });
+  const done = (v) => { s.close(); r(v); };
+  s.on('connect', () => done('connect'));
+  s.on('connect_error', () => done('error'));
+  setTimeout(() => done('timeout'), 4000);
+});
+ok(await sockTry('https://site-malicioso.example') === 'error', 'socket de origem desconhecida recusado');
+ok(await sockTry('http://localhost:3000') === 'connect', 'socket do painel oficial aceito');
+
+console.log('\n[selo HMAC + âncora pública]');
+ok((await call('POST', '/users', { token: pB.accessToken, body: { chamberId: chB, name: 'Ver Beta', email: 'vb@t.com', password: 'senhaBeta123', role: 'vereador' } })).status === 201, 'presidente B cadastra membro');
+const avS = (await call('GET', `/audit/chamber/${chB}/verify`, { token: pB.accessToken })).data;
+ok(avS.valid && avS.seal === 'ativo' && avS.total > 0 && avS.sealed === avS.total && avS.unsealed === 0, 'todos os registros de auditoria selados', JSON.stringify(avS));
+ok(psql(`SELECT COUNT(*) FROM votes WHERE seal IS NULL`).out === '0', 'todos os votos selados');
+const vOpen = (await call('GET', `/voting/item/${item2.id}/verify`, { token: pA.accessToken })).data;
+ok(vOpen.valid === true && vOpen.sealed === true, 'resultado da votação selado e íntegro', JSON.stringify(vOpen));
+const anc = (await call('GET', '/public/ancoras')).data;
+const ancB = anc.camaras?.find(c => c.chamberId === chB);
+ok(ancB && /^[0-9a-f]{64}$/.test(ancB.hash) && (await call('GET', `/public/chambers/${chB}/ancora/${ancB.seq}`)).data.hash === ancB.hash,
+  'âncora pública confere com o registro');
+// Invasor com acesso de escrita ao banco anexa um registro com hash e encadeamento CORRETOS, mas sem a chave do selo
+const { createHash } = await import('node:crypto');
+const canon = (v) => v === null || typeof v !== 'object' ? JSON.stringify(v)
+  : Array.isArray(v) ? `[${v.map(canon).join(',')}]`
+  : `{${Object.keys(v).filter(k => v[k] !== undefined).sort().map(k => `${JSON.stringify(k)}:${canon(v[k])}`).join(',')}}`;
+const [hSeq, hHash] = psql(`SELECT seq||'|'||hash FROM audit_logs WHERE "chamberId"='${chB}' ORDER BY seq DESC LIMIT 1`).out.split('|');
+const fSeq = Number(hSeq) + 1, fTs = String(Date.now());
+const fHash = createHash('sha256').update(canon({
+  chamberId: chB, sessionId: null, userId: null, action: 'voting:closed', targetType: null, targetId: null,
+  detail: { forjado: true }, ipAddress: null, deviceInfo: null, previousHash: hHash, seq: fSeq, ts: fTs,
+})).digest('hex');
+psql(`INSERT INTO audit_logs (id, "chamberId", action, detail, hash, "previousHash", seq, ts) VALUES (gen_random_uuid(), '${chB}', 'voting:closed', '{"forjado":true}', '${fHash}', '${hHash}', ${fSeq}, ${fTs})`);
+const avF = (await call('GET', `/audit/chamber/${chB}/verify`, { token: pB.accessToken })).data;
+ok(avF.valid === false && /selo/.test(avF.reason), 'registro forjado com hash correto, sem selo, é detectado', JSON.stringify(avF));
+
 console.log('\n[headers]');
 const h = await fetch(B + '/health');
 ok(h.headers.get('x-frame-options') === 'DENY' && h.headers.get('x-content-type-options') === 'nosniff' && !h.headers.get('x-powered-by'), 'headers de segurança na API');

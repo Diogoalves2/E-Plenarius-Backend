@@ -85,7 +85,7 @@ main() {
 
   docker image inspect eplenarius-backend:latest >/dev/null 2>&1 \
     && docker tag eplenarius-backend:latest eplenarius-backend:previous
-  "${DC[@]}" build api 2>&1 | tail -5 | tee -a "$LOG"
+  "${DC[@]}" build --pull api 2>&1 | tail -5 | tee -a "$LOG"
 
   if $sync; then
     log "boot com DB_SYNCHRONIZE=true"

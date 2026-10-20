@@ -5,15 +5,37 @@ import { User } from './entities/user.entity';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { sortMesaFirst } from '../common/legislative';
+import { AuditService } from '../audit/audit.service';
+
+/** Quem fez a alteração (vai para a trilha de auditoria da câmara do usuário alterado). */
+export interface ActorCtx { id: string; ip?: string }
+
+/** Campos cuja mudança fica registrada (valores antigo → novo). */
+const TRACKED_FIELDS = ['name', 'email', 'username', 'role', 'title', 'party', 'initials', 'avatarUrl', 'isActive'] as const;
 
 @Injectable()
 export class UsersService {
   constructor(
     @InjectRepository(User)
     private readonly usersRepo: Repository<User>,
+    private readonly audit: AuditService,
   ) {}
 
-  async create(dto: CreateUserDto): Promise<Partial<User>> {
+  /** Registra na auditoria da câmara do usuário-alvo (superadmin sem câmara não tem trilha). */
+  private async trail(target: { id: string; chamberId: string | null }, actor: ActorCtx | undefined, action: string, detail?: Record<string, any>) {
+    if (!target.chamberId) return;
+    await this.audit.log({
+      chamberId: target.chamberId,
+      userId: actor?.id ?? target.id,
+      action,
+      targetType: 'user',
+      targetId: target.id,
+      detail,
+      ipAddress: actor?.ip,
+    });
+  }
+
+  async create(dto: CreateUserDto, actor?: ActorCtx): Promise<Partial<User>> {
     const existing = await this.usersRepo.findOne({ where: { email: dto.email } });
     if (existing) throw new ConflictException('E-mail já cadastrado');
 
@@ -38,6 +60,7 @@ export class UsersService {
     });
 
     const saved = await this.usersRepo.save(user);
+    await this.trail(saved, actor, 'user:created', { name: saved.name, email: saved.email, role: saved.role, title: saved.title ?? null });
     const { passwordHash, ...result } = saved;
     return result;
   }
@@ -98,7 +121,7 @@ export class UsersService {
     await this.usersRepo.save(user);
   }
 
-  async setPin(userId: string, pin: string | null): Promise<void> {
+  async setPin(userId: string, pin: string | null, actor?: ActorCtx): Promise<void> {
     const user = await this.usersRepo
       .createQueryBuilder('user')
       .addSelect('user.pinHash')
@@ -113,6 +136,7 @@ export class UsersService {
       `UPDATE refresh_tokens SET revoked = true WHERE "userId" = $1 AND "mobileDevice" IS NOT NULL AND revoked = false`,
       [userId],
     );
+    await this.trail(user, actor, pin ? 'user:pin_set' : 'user:pin_removed');
   }
 
   /** Troca de senha encerra todas as sessões (web e app). */
@@ -124,7 +148,7 @@ export class UsersService {
     await this.usersRepo.update(userId, { mobileDeviceId: null });
   }
 
-  async adminResetPassword(userId: string, newPassword: string): Promise<void> {
+  async adminResetPassword(userId: string, newPassword: string, actor?: ActorCtx): Promise<void> {
     const user = await this.usersRepo
       .createQueryBuilder('user')
       .addSelect('user.passwordHash')
@@ -134,6 +158,7 @@ export class UsersService {
     user.passwordHash = newPassword;
     await this.usersRepo.save(user);
     await this.revokeAllSessions(userId);
+    await this.trail(user, actor, 'user:password_reset');
   }
 
   async update(id: string, dto: Partial<{ name: string; email: string; role: string; title: string; party: string; initials: string; avatarUrl: string; isActive: boolean; lastLoginAt: Date }>): Promise<Partial<User>> {
@@ -155,7 +180,7 @@ export class UsersService {
     }
   }
 
-  async updateProfile(id: string, dto: UpdateUserDto): Promise<Partial<User>> {
+  async updateProfile(id: string, dto: UpdateUserDto, actor?: ActorCtx): Promise<Partial<User>> {
     const user = await this.usersRepo.findOne({ where: { id } });
     if (!user) throw new NotFoundException('Usuário não encontrado');
 
@@ -171,8 +196,20 @@ export class UsersService {
       }
     }
 
+    const changes: Record<string, { de: any; para: any }> = {};
+    for (const f of TRACKED_FIELDS) {
+      if ((dto as any)[f] !== undefined && (dto as any)[f] !== (user as any)[f]) {
+        changes[f] = { de: (user as any)[f] ?? null, para: (dto as any)[f] ?? null };
+      }
+    }
+
     Object.assign(user, dto);
     const saved = await this.usersRepo.save(user);
+    if (Object.keys(changes).length) {
+      // Desativar a conta derruba as sessões abertas na hora.
+      if (changes.isActive && saved.isActive === false) await this.revokeAllSessions(id);
+      await this.trail(saved, actor, changes.role ? 'user:role_changed' : 'user:updated', { changes });
+    }
     const { passwordHash, ...result } = saved as any;
     return result;
   }
@@ -195,7 +232,7 @@ export class UsersService {
     return result;
   }
 
-  async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
+  async changePassword(userId: string, currentPassword: string, newPassword: string, ip?: string): Promise<void> {
     const user = await this.usersRepo
       .createQueryBuilder('user')
       .addSelect('user.passwordHash')
@@ -209,6 +246,7 @@ export class UsersService {
     user.passwordHash = newPassword;
     await this.usersRepo.save(user);
     await this.revokeAllSessions(userId);
+    await this.trail(user, { id: userId, ip }, 'user:password_changed');
   }
 
   private extractInitials(name: string): string {

@@ -12,6 +12,7 @@ import { CriarConvidadoDto } from './dto/criar-convidado.dto';
 import { Session } from '../sessions/entities/session.entity';
 import { AuditService } from '../audit/audit.service';
 import { ChambersService } from '../chambers/chambers.service';
+import { withPublicUser } from '../common/serialize';
 
 type Interval = ReturnType<typeof setInterval>;
 
@@ -204,11 +205,12 @@ export class ExpedienteService {
   }
 
   async listarInscritos(sessionId: string) {
-    return this.inscricoesRepo.find({
+    const list = await this.inscricoesRepo.find({
       where: { sessionId },
       relations: ['user'],
       order: { tipo: 'ASC', createdAt: 'ASC' },
     });
+    return list.map(i => withPublicUser(i, 'user'));
   }
 
   // ─── Tempo principal ───────────────────────────────────────────────────────

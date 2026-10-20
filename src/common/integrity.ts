@@ -1,4 +1,5 @@
 import { createHash } from 'crypto';
+import { toPublicUser } from './serialize';
 
 /** JSON com chaves ordenadas — o jsonb do Postgres reordena chaves, então o hash precisa ser canônico. */
 export function canonicalJson(value: unknown): string {
@@ -35,8 +36,10 @@ interface CountsLike {
  */
 export function maskSecretCounts<T extends CountsLike>(item: T): T & { votesTotal: number; countsHidden: boolean } {
   const total = (item.votesYes ?? 0) + (item.votesNo ?? 0) + (item.votesAbstain ?? 0);
+  // Autor da matéria sai só com campos públicos (pauta é pública e vai para o telão)
+  const author = 'authorUser' in (item as any) ? { authorUser: toPublicUser((item as any).authorUser) } : {};
   if (item.votingType === 'secreta' && item.status === 'em_votacao') {
-    return { ...item, votesYes: null, votesNo: null, votesAbstain: null, votesTotal: total, countsHidden: true };
+    return { ...item, ...author, votesYes: null, votesNo: null, votesAbstain: null, votesTotal: total, countsHidden: true };
   }
-  return { ...item, votesTotal: total, countsHidden: false };
+  return { ...item, ...author, votesTotal: total, countsHidden: false };
 }

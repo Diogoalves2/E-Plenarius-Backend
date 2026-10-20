@@ -1,0 +1,57 @@
+name: Âncoras da auditoria
+
+# Todo dia copia o último elo da cadeia de auditoria de cada câmara para a branch "ancoras"
+# deste repositório (fora da VPS, com data do GitHub). Antes, confere se as âncoras do dia
+# anterior ainda batem: se alguém reescreveu o histórico no servidor — mesmo com acesso root
+# e a chave do selo — o hash daquela posição muda e este job falha (o GitHub avisa por e-mail).
+
+on:
+  schedule:
+    - cron: '7 3 * * *' # 00:07 em Brasília
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ancoras
+  cancel-in-progress: false
+
+jobs:
+  ancorar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      API: https://eplenarius.2-25-152-184.sslip.io/api
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ancoras
+
+      - name: Conferir âncoras anteriores
+        run: |
+          set -euo pipefail
+          last=$(ls ancoras/*.json 2>/dev/null | sort | tail -1 || true)
+          [ -z "$last" ] && { echo "primeira âncora"; exit 0; }
+          echo "conferindo $last"
+          jq -c '.camaras[]' "$last" | while read -r c; do
+            id=$(jq -r .chamberId <<<"$c"); seq=$(jq -r .seq <<<"$c"); h=$(jq -r .hash <<<"$c")
+            now=$(curl -sf --retry 3 "$API/public/chambers/$id/ancora/$seq" | jq -r .hash) || now="(ausente)"
+            if [ "$now" != "$h" ]; then
+              echo "::error::Câmara $id: registro $seq da auditoria mudou ($h -> $now). Histórico reescrito no servidor."
+              exit 1
+            fi
+            echo "ok $id seq $seq"
+          done
+
+      - name: Gravar âncora de hoje
+        run: |
+          set -euo pipefail
+          mkdir -p ancoras
+          curl -sf --retry 3 "$API/public/ancoras" | jq . > "ancoras/$(date -u +%F).json"
+          git config user.name "eplenarius-ancoras"
+          git config user.email "eplenarius-ancoras@users.noreply.github.com"
+          git add ancoras
+          git diff --cached --quiet && { echo "sem mudanças"; exit 0; }
+          git commit -m "Âncora $(date -u +%F)"
+          git push

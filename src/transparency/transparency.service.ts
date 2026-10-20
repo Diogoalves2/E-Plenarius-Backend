@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { VotingService } from '../voting/voting.service';
+import { AuditService } from '../audit/audit.service';
 import { MAJORITY_LABEL, Majority, sortMesaFirst } from '../common/legislative';
 
 const CLOSED = `('aprovado', 'rejeitado')`;
@@ -14,7 +15,26 @@ export class TransparencyService {
   constructor(
     private readonly dataSource: DataSource,
     private readonly voting: VotingService,
+    private readonly audit: AuditService,
   ) {}
+
+  /**
+   * Âncoras públicas: copiadas todo dia para fora da VPS (GitHub). Quem reescrever o histórico
+   * no servidor, mesmo com a chave do selo, não consegue mudar o que já foi publicado.
+   */
+  async ancoras() {
+    const heads = await this.audit.heads();
+    return {
+      geradoEm: new Date().toISOString(),
+      camaras: heads.map(h => ({ chamberId: h.chamberId, seq: h.seq, hash: h.hash, em: h.createdAt })),
+    };
+  }
+
+  async ancora(chamberId: string, seq: number) {
+    const hash = await this.audit.hashAt(chamberId, seq);
+    if (!hash) throw new NotFoundException('Registro não encontrado');
+    return { chamberId, seq, hash };
+  }
 
   private q(sql: string, params: any[] = []) {
     return this.dataSource.query(sql, params);

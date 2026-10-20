@@ -21,9 +21,9 @@ export class CreateUserDto {
   @MinLength(3)
   username?: string;
 
-  @ApiProperty({ minLength: 6 })
+  @ApiProperty({ minLength: 8 })
   @IsString()
-  @MinLength(6)
+  @MinLength(8, { message: 'A senha deve ter pelo menos 8 caracteres.' })
   password: string;
 
   @ApiProperty({ enum: ['presidente', 'vice_presidente', 'vereador', 'secretaria'], default: 'vereador' })

@@ -1,4 +1,4 @@
-import { Controller, Get, Header, Param, ParseUUIDPipe, Query, Res } from '@nestjs/common';
+import { Controller, Get, Header, Param, ParseIntPipe, ParseUUIDPipe, Query, Res } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { TransparencyService } from './transparency.service';
 
@@ -7,6 +7,20 @@ import { TransparencyService } from './transparency.service';
 @Controller('public')
 export class TransparencyController {
   constructor(private readonly service: TransparencyService) {}
+
+  @Get('ancoras')
+  @Header('Cache-Control', 'no-store')
+  @ApiOperation({ summary: 'Âncora pública: último elo da cadeia de auditoria de cada câmara' })
+  ancoras() {
+    return this.service.ancoras();
+  }
+
+  @Get('chambers/:chamberId/ancora/:seq')
+  @Header('Cache-Control', 'no-store')
+  @ApiOperation({ summary: 'Hash do registro de auditoria na posição seq (confere uma âncora guardada)' })
+  ancora(@Param('chamberId', ParseUUIDPipe) chamberId: string, @Param('seq', ParseIntPipe) seq: number) {
+    return this.service.ancora(chamberId, seq);
+  }
 
   @Get('chambers/:chamberId')
   @Header('Cache-Control', 'public, max-age=60')
