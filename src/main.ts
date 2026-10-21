@@ -79,6 +79,8 @@ async function bootstrap() {
   app.useStaticAssets(uploadsDir, {
     prefix: '/uploads',
     setHeaders: (res, filePath) => {
+      // Nomes aleatórios: cada upload novo tem URL nova, o navegador pode guardar por 30 dias.
+      res.setHeader('Cache-Control', 'public, max-age=2592000');
       if (filePath.toLowerCase().endsWith('.svg')) {
         // SVG pode carregar script: servido em sandbox, sem execução.
         res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");

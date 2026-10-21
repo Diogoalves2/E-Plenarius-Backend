@@ -411,13 +411,25 @@ const upload = (path, token, name, type, content) => {
   f.append('file', new Blob([content], { type }), name);
   return fetch(B + path, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: f });
 };
-const PNG_1PX = Buffer.from('89504e470d0a1a0a0000000d4948445200000001000000010806000000'
-  + '1f15c4890000000d49444154789c63600000000200015e2a8a5f0000000049454e44ae426082', 'hex');
+const { default: sharp } = await import('sharp');
+const PNG_1PX = await sharp({ create: { width: 2, height: 2, channels: 4, background: '#ffffff' } }).png().toBuffer();
 ok((await upload('/upload/avatar', pA.accessToken, 'x.png', 'image/png', '<html><script>alert(1)</script></html>')).status === 400,
   'HTML disfarçado de PNG é recusado (assinatura do arquivo)');
 const upOk = await upload('/upload/avatar', pA.accessToken, 'evil.html', 'image/png', PNG_1PX);
 const upOkD = await upOk.json();
-ok(upOk.status === 201 && /^\/uploads\/avatar_[0-9a-f]{32}\.png$/.test(upOkD.url), 'extensão salva vem do tipo validado, não do nome', JSON.stringify(upOkD));
+ok(upOk.status === 201 && /^\/uploads\/avatar_[0-9a-f]{32}\.jpg$/.test(upOkD.url), 'extensão salva vem do tipo validado, não do nome', JSON.stringify(upOkD));
+const bigPhoto = await sharp({ create: { width: 4000, height: 3000, channels: 3, background: '#3366cc' } })
+  .withMetadata({ exif: { IFD0: { Make: 'CelularTeste' } } }).jpeg({ quality: 95 }).toBuffer();
+const upBig = await (await upload('/upload/avatar', pA.accessToken, 'foto.jpg', 'image/jpeg', bigPhoto)).json();
+const bigMeta = await sharp(Buffer.from(await (await fetch(WS + upBig.url)).arrayBuffer())).metadata();
+ok(bigMeta.width === 640 && bigMeta.height === 480 && !bigMeta.exif, 'foto reduzida para 640 px e sem EXIF (GPS/celular)', JSON.stringify({ w: bigMeta.width, h: bigMeta.height }));
+const upThumb = await (await upload('/upload/avatar?purpose=thumb', pA.accessToken, 'capa.jpg', 'image/jpeg', bigPhoto)).json();
+ok((await sharp(Buffer.from(await (await fetch(WS + upThumb.url)).arrayBuffer())).metadata()).width === 1600, 'capa da transmissão mantém 1600 px');
+const logoBefore = (await call('GET', '/upload/system-logo')).data.url;
+await upload('/upload/logo', sa.accessToken, 'logo.png', 'image/png', PNG_1PX);
+ok((await call('GET', '/upload/system-logo')).data.url === logoBefore, 'logo de câmara não troca a logo do sistema');
+const sysLogo = await (await upload('/upload/logo?target=system', sa.accessToken, 'logo.png', 'image/png', PNG_1PX)).json();
+ok((await call('GET', '/upload/system-logo')).data.url === sysLogo.url, 'logo do sistema trocada só pelas configurações do sistema');
 ok((await upload('/upload/logo', sa.accessToken, 'l.svg', 'image/svg+xml', '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"></svg>')).status === 400,
   'SVG com evento/script recusado');
 ok((await call('POST', '/users', { token: pA.accessToken, body: { chamberId: chA, name: 'Curta', email: 'curta@t.com', password: '1234567', role: 'vereador' } })).status === 400,

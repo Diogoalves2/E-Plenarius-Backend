@@ -6,17 +6,19 @@ import {
   UseInterceptors,
   UploadedFile,
   BadRequestException,
+  Query,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiConsumes, ApiBody } from '@nestjs/swagger';
 import { diskStorage } from 'multer';
-import { join } from 'path';
+import { basename, join } from 'path';
 import { randomBytes } from 'crypto';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { open, unlink } from 'fs/promises';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
+import { ImageKind, optimizeImage } from '../common/image-optimizer';
 
 const UPLOADS_DIR      = process.env.UPLOADS_DIR || join(process.cwd(), 'uploads');
 const SYSTEM_LOGO_FILE = join(UPLOADS_DIR, 'system_logo.txt');
@@ -63,6 +65,16 @@ async function assertFileSignature(path: string, mime: string): Promise<void> {
   }
 }
 
+/** Reduz/limpa a imagem enviada; se não for uma imagem decodificável, apaga e recusa. */
+async function optimizeOrReject(path: string, kind: ImageKind): Promise<string> {
+  try {
+    return basename((await optimizeImage(path, kind)).path);
+  } catch {
+    await unlink(path).catch(() => {});
+    throw new BadRequestException('Imagem inválida ou corrompida.');
+  }
+}
+
 function imageStorage(prefix: string) {
   return diskStorage({
     destination: UPLOADS_DIR,
@@ -84,7 +96,7 @@ export class UploadController {
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('superadmin', 'presidente')
-  @ApiOperation({ summary: 'Upload de foto de usuário (superadmin/presidente)' })
+  @ApiOperation({ summary: 'Upload de foto de usuário (até 640 px) ou, com ?purpose=thumb, capa da transmissão (até 1600 px)' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({ schema: { type: 'object', properties: { file: { type: 'string', format: 'binary' } } } })
   @UseInterceptors(
@@ -94,17 +106,18 @@ export class UploadController {
       fileFilter: mimeFilter(['image/jpeg', 'image/png', 'image/webp'], 'Formato inválido. Use JPG, PNG ou WebP.'),
     }),
   )
-  async uploadAvatar(@UploadedFile() file: Express.Multer.File) {
+  async uploadAvatar(@UploadedFile() file: Express.Multer.File, @Query('purpose') purpose?: string) {
     if (!file) throw new BadRequestException('Nenhum arquivo enviado');
     await assertFileSignature(file.path, file.mimetype);
-    return { url: `/uploads/${file.filename}` };
+    const name = await optimizeOrReject(file.path, purpose === 'thumb' ? 'thumb' : 'avatar');
+    return { url: `/uploads/${name}` };
   }
 
   @Post('logo')
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('superadmin')
-  @ApiOperation({ summary: 'Upload de logomarca (superadmin)' })
+  @ApiOperation({ summary: 'Upload de logomarca (superadmin). ?target=system troca a logo do sistema' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({ schema: { type: 'object', properties: { file: { type: 'string', format: 'binary' } } } })
   @UseInterceptors(
@@ -114,11 +127,13 @@ export class UploadController {
       fileFilter: mimeFilter(['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml'], 'Formato inválido. Use JPG, PNG, WebP ou SVG.'),
     }),
   )
-  async uploadLogo(@UploadedFile() file: Express.Multer.File) {
+  async uploadLogo(@UploadedFile() file: Express.Multer.File, @Query('target') target?: string) {
     if (!file) throw new BadRequestException('Nenhum arquivo enviado');
     await assertFileSignature(file.path, file.mimetype);
-    const url = `/uploads/${file.filename}`;
-    writeFileSync(SYSTEM_LOGO_FILE, url, 'utf8');
+    const name = file.mimetype === 'image/svg+xml' ? file.filename : await optimizeOrReject(file.path, 'logo');
+    const url = `/uploads/${name}`;
+    // Só a tela de configurações do sistema troca a logo do sistema (logo de câmara não).
+    if (target === 'system') writeFileSync(SYSTEM_LOGO_FILE, url, 'utf8');
     return { url };
   }
 
