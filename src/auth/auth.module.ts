@@ -10,13 +10,17 @@ import { RefreshToken } from './entities/refresh-token.entity';
 import { Session } from '../sessions/entities/session.entity';
 import { UsersModule } from '../users/users.module';
 import { DevicesModule } from '../devices/devices.module';
+import { AuditModule } from '../audit/audit.module';
+import { User } from '../users/entities/user.entity';
+import { MfaService } from './mfa/mfa.service';
 
 @Module({
   imports: [
     UsersModule,
     DevicesModule,
+    AuditModule,
     PassportModule,
-    TypeOrmModule.forFeature([RefreshToken, Session]),
+    TypeOrmModule.forFeature([RefreshToken, Session, User]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: (config: ConfigService) => ({
@@ -26,7 +30,7 @@ import { DevicesModule } from '../devices/devices.module';
       inject: [ConfigService],
     }),
   ],
-  providers: [AuthService, JwtStrategy],
+  providers: [AuthService, JwtStrategy, MfaService],
   controllers: [AuthController],
   exports: [AuthService],
 })

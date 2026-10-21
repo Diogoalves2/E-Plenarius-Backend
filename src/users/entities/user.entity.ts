@@ -68,6 +68,26 @@ export class User {
   @Column({ nullable: true, type: 'int' })
   audioChannel: number | null;
 
+  // ── Verificação em duas etapas (TOTP) ──
+  /** Segredo TOTP cifrado (AES-GCM, chave fora do banco). */
+  @Column({ type: 'varchar', select: false, nullable: true })
+  mfaSecret: string | null;
+
+  /** Segredo gerado no cadastro, ainda não confirmado com um código. */
+  @Column({ type: 'varchar', select: false, nullable: true })
+  mfaPendingSecret: string | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  mfaEnabledAt: Date | null;
+
+  /** Último passo TOTP aceito: o mesmo código não é aceito duas vezes. */
+  @Column({ type: 'int', select: false, nullable: true })
+  mfaLastStep: number | null;
+
+  /** sha256 dos códigos de recuperação ainda não usados. */
+  @Column({ type: 'jsonb', select: false, nullable: true })
+  mfaRecoveryCodes: string[] | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

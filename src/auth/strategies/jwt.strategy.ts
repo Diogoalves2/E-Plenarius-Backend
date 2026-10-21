@@ -31,7 +31,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: JwtPayload) {
-    if (!payload.sub) throw new UnauthorizedException();
+    if (!payload.sub || (payload as any).purpose) throw new UnauthorizedException();
 
     // Conta desativada perde o acesso na hora (sem esperar o token expirar).
     const user = await this.usersService.findRawById(payload.sub);

@@ -34,9 +34,11 @@ export class UsersController {
   @ApiOperation({ summary: 'Listar vereadores da câmara' })
   async findByChamber(@Param('chamberId', ParseUUIDPipe) chamberId: string, @CurrentUser() user: any) {
     const users = await this.usersService.findByChamber(chamberId);
-    const canSeePrivate = user && (user.role === 'superadmin' || user.chamberId === chamberId);
+    // E-mail, usuário, último acesso e 2FA: só quem gerencia os membros da câmara.
+    const canSeePrivate = user && (user.role === 'superadmin'
+      || (user.chamberId === chamberId && ['presidente', 'secretaria'].includes(user.role)));
     if (canSeePrivate) return users;
-    // Visitante (telão/público): sem e-mail, username, último login.
+    // Visitante (telão/público) e demais membros: só campos públicos.
     return users.map(u => ({ ...toPublicUser(u), isActive: u.isActive }));
   }
 
@@ -138,6 +140,7 @@ export class UsersController {
     if (actor.role !== 'superadmin' && actor.id !== id && user.chamberId !== actor.chamberId) {
       throw new ForbiddenException('Sem acesso a usuários de outra câmara');
     }
-    return user;
+    const manager = actor.role === 'superadmin' || ['presidente', 'secretaria'].includes(actor.role);
+    return actor.id === id || manager ? user : { ...toPublicUser(user), isActive: user.isActive };
   }
 }

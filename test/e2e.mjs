@@ -5,6 +5,7 @@
 //   E2E_PSQL="psql postgresql://user:pass@localhost:5432/db" \
 //   node test/e2e.mjs <superadminEmail> <superadminSenha>
 import { execSync } from 'node:child_process';
+import { createHmac } from 'node:crypto';
 
 const B = process.env.E2E_API ?? 'http://127.0.0.1:3001/api';
 const WS = B.replace(/\/api\/?$/, '');
@@ -17,10 +18,10 @@ const ok = (cond, label, extra = '') => {
   if (cond) { pass++; console.log(`  ✔ ${label}`); }
   else { fail++; console.log(`  ✘ ${label} ${extra}`); }
 };
-async function call(method, path, { token, body } = {}) {
+async function call(method, path, { token, body, headers } = {}) {
   const res = await fetch(B + path, {
     method,
-    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...headers },
     body: body ? JSON.stringify(body) : undefined,
   });
   let data = null;
@@ -32,7 +33,25 @@ const psql = (sql) => {
     return { out: execSync(`${PSQL} -tAc ${JSON.stringify(sql)}`, { stdio: 'pipe' }).toString().trim(), err: null };
   } catch (e) { return { out: null, err: e.stderr.toString() }; }
 };
-const login = async (identifier, password) => (await call('POST', '/auth/login', { body: { identifier, password } })).data;
+// TOTP (RFC 6238) igual ao do app autenticador, para os testes passarem pela 2FA.
+const b32 = (s) => { let bits = 0, v = 0; const out = []; for (const c of s) { v = (v << 5) | 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'.indexOf(c); bits += 5; if (bits >= 8) { out.push((v >>> (bits - 8)) & 255); bits -= 8; } } return Buffer.from(out); };
+const totp = (secret, offset = 0) => {
+  const msg = Buffer.alloc(8); msg.writeBigUInt64BE(BigInt(Math.floor(Date.now() / 30000) + offset));
+  const h = createHmac('sha1', b32(secret)).update(msg).digest(); const o = h[19] & 15;
+  return String((((h[o] & 127) << 24) | (h[o + 1] << 16) | (h[o + 2] << 8) | h[o + 3]) % 1e6).padStart(6, '0');
+};
+// Superadmin/presidente: 1º login cadastra a 2FA e guarda o "confiar neste computador".
+const mfa = {};
+const enroll = async (identifier, mfaToken, headers) => {
+  const setup = (await call('POST', '/auth/mfa/setup', { body: { mfaToken } })).data;
+  const en = (await call('POST', '/auth/mfa/enable', { body: { mfaToken, code: totp(setup.secret), remember: true }, headers })).data;
+  mfa[identifier] = { secret: setup.secret, trust: en.trustToken, recovery: en.recoveryCodes, usedCode: totp(setup.secret) };
+  return en;
+};
+const login = async (identifier, password) => {
+  const r = (await call('POST', '/auth/login', { body: { identifier, password, trustToken: mfa[identifier]?.trust } })).data;
+  return r?.mfaSetupRequired ? enroll(identifier, r.mfaToken) : r;
+};
 const KEY1 = 'k1'.padEnd(40, 'a'), KEY2 = 'k2'.padEnd(40, 'b');
 
 console.log('\n[setup]');
@@ -44,6 +63,37 @@ const chA = A.chamber.id, chB = Bc.chamber.id;
 const pA = await login('pa@t.com', 'senhaAlfa123');
 const pB = await login('pb@t.com', 'senhaBeta123');
 ok(pA?.accessToken && pB?.accessToken, 'login presidentes A e B');
+
+console.log('\n[2FA: superadmin e presidente]');
+const PROXY = { 'x-eplen-proxy': process.env.E2E_WEB_PROXY_SECRET ?? '', 'x-eplen-client-ip': '203.0.113.7' };
+const s0 = (await call('POST', '/auth/login', { body: { identifier: 'pa@t.com', password: 'senhaAlfa123' } })).data;
+ok(s0.mfaRequired === true && !s0.accessToken && !s0.refreshToken, 'presidente com 2FA: senha sozinha não entrega token');
+ok((await call('GET', '/users/me', { token: s0.mfaToken })).status === 401, 'token da etapa de 2FA não vale como acesso');
+ok((await call('POST', '/auth/mfa/verify', { body: { mfaToken: s0.mfaToken, code: mfa['pa@t.com'].usedCode } })).status === 401, 'mesmo código não é aceito duas vezes');
+const s1 = await call('POST', '/auth/mfa/verify', { body: { mfaToken: s0.mfaToken, code: mfa['pa@t.com'].recovery[0] } });
+ok(s1.status === 200 && s1.data.accessToken && s1.data.usedRecoveryCode, 'código de recuperação entra uma vez');
+ok((await call('POST', '/auth/mfa/verify', { body: { mfaToken: s0.mfaToken, code: mfa['pa@t.com'].recovery[0] } })).status === 401, 'código de recuperação usado não serve de novo');
+const st0 = (await call('GET', '/auth/mfa/status', { token: pA.accessToken })).data;
+ok(st0.required && st0.enabled && st0.recoveryCodesLeft === 9, 'status da 2FA', JSON.stringify(st0));
+ok((await call('POST', '/auth/login', { body: { identifier: 'pa@t.com', password: 'senhaAlfa123', trustToken: mfa['pb@t.com'].trust } })).data.mfaRequired,
+  '"confiar neste computador" de outro usuário não vale');
+const sB = (await call('POST', '/auth/login', { body: { identifier: 'pb@t.com', password: 'senhaBeta123' } })).data;
+const lockSt = [];
+for (let i = 0; i < 6; i++) lockSt.push((await call('POST', '/auth/mfa/verify', { body: { mfaToken: sB.mfaToken, code: '000000' } })).status);
+ok(lockSt.slice(0, 5).every(s => s === 401) && lockSt[5] === 429, 'bloqueio após 5 códigos errados', lockSt.join(','));
+ok((await call('POST', `/auth/mfa/reset/${pA.user.id}`, { token: pA.accessToken })).status === 403, 'presidente não redefine 2FA');
+ok((await call('POST', `/auth/mfa/reset/${pA.user.id}`, { token: sa.accessToken })).status === 200, 'superadmin redefine 2FA (celular perdido)');
+const s2 = (await call('POST', '/auth/login', { body: { identifier: 'pa@t.com', password: 'senhaAlfa123', trustToken: mfa['pa@t.com'].trust } })).data;
+ok(s2.mfaSetupRequired === true, 'após redefinir, "confiar neste computador" perde validade e pede novo cadastro');
+const re = await enroll('pa@t.com', s2.mfaToken, PROXY);
+ok(re.accessToken && re.recoveryCodes?.length === 10, 'novo cadastro da 2FA');
+const audMfa = (await call('GET', `/audit/chamber/${chA}?limit=1000`, { token: re.accessToken })).data;
+ok(['auth:mfa_enabled', 'auth:mfa_recovery_used', 'auth:mfa_reset'].every(a => audMfa.some(l => l.action === a)), 'eventos da 2FA na auditoria');
+ok(audMfa.some(l => l.action === 'auth:mfa_enabled' && l.ipAddress === '203.0.113.7'), 'IP real repassado pelo painel (segredo compartilhado)');
+const s3 = (await call('POST', '/auth/login', { body: { identifier: 'pa@t.com', password: 'senhaAlfa123' } })).data;
+await call('POST', '/auth/mfa/verify', { body: { mfaToken: s3.mfaToken, code: re.recoveryCodes[0] }, headers: { 'x-eplen-proxy': 'x'.repeat(48), 'x-eplen-client-ip': '198.51.100.9' } });
+const audIp = (await call('GET', `/audit/chamber/${chA}?limit=1000`, { token: re.accessToken })).data;
+ok(!audIp.some(l => l.ipAddress === '198.51.100.9'), 'cabeçalho de IP sem o segredo é ignorado');
 
 console.log('\n[isolamento entre câmaras]');
 const mk = (n) => call('POST', '/users', { token: pA.accessToken, body: { chamberId: chA, name: `Ver ${n}`, email: `v${n}@t.com`, password: 'senhaVer123', role: 'vereador' } });
@@ -379,6 +429,8 @@ ok(audA.some(a => a.action === 'user:updated' && a.detail?.changes?.isActive?.pa
 ok(audA.every(a => !a.user || !('email' in a.user)), 'auditoria não expõe e-mail dos usuários');
 const pubMembers = (await call('GET', `/users/chamber/${chA}`)).data;
 ok(pubMembers.length > 0 && pubMembers.every(u => !('email' in u) && !('username' in u)), 'lista pública de membros sem e-mail/usuário');
+const verMembers = (await call('GET', `/users/chamber/${chA}`, { token: w3.accessToken })).data;
+ok(Array.isArray(verMembers) && verMembers.length > 0 && verMembers.every(u => !('email' in u)), 'vereador logado não recebe e-mail dos colegas');
 const sockTry = (origin) => new Promise(r => {
   const s = io(`${WS}/voting`, { transports: ['websocket'], reconnection: false, extraHeaders: { Origin: origin } });
   const done = (v) => { s.close(); r(v); };

@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString, IsUUID, Matches, MaxLength, MinLength } from 'class-validator';
+import { IsBoolean, IsOptional, IsString, IsUUID, Matches, MaxLength, MinLength } from 'class-validator';
 
 export class LoginDto {
   @ApiProperty({ example: 'pedro' })
@@ -11,6 +11,37 @@ export class LoginDto {
   @IsString()
   @MinLength(6)
   password: string;
+
+  @ApiPropertyOptional({ description: '"Confiar neste computador" (dispensa o código da 2FA por 30 dias)' })
+  @IsOptional() @IsString() @MaxLength(2000)
+  trustToken?: string;
+}
+
+export class MfaTokenDto {
+  @ApiProperty({ description: 'Token devolvido pelo login quando falta o segundo fator' })
+  @IsString() @MaxLength(2000)
+  mfaToken: string;
+}
+
+export class MfaCodeDto extends MfaTokenDto {
+  @ApiProperty({ example: '123456', description: 'Código do app autenticador ou de recuperação (xxxx-xxxx)' })
+  @IsString() @Matches(/^\s*(\d{6}|[A-Za-z0-9]{4}-?[A-Za-z0-9]{4})\s*$/, { message: 'Código inválido' })
+  code: string;
+
+  @ApiPropertyOptional() @IsOptional() @IsBoolean()
+  remember?: boolean;
+}
+
+export class MfaOnlyCodeDto {
+  @ApiProperty({ example: '123456' })
+  @IsString() @Matches(/^\s*(\d{6}|[A-Za-z0-9]{4}-?[A-Za-z0-9]{4})\s*$/, { message: 'Código inválido' })
+  code: string;
+}
+
+export class LogoutDto {
+  @ApiPropertyOptional({ description: 'Encerra só esta sessão; sem ele, encerra todas' })
+  @IsOptional() @IsString() @MaxLength(200)
+  refreshToken?: string;
 }
 
 export class RefreshTokenDto {

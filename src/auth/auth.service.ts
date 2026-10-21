@@ -17,6 +17,7 @@ import { RefreshToken } from './entities/refresh-token.entity';
 import { Session } from '../sessions/entities/session.entity';
 import { LoginDto, RefreshTokenDto, MobileLoginDto } from './dto/login.dto';
 import { JwtPayload } from './strategies/jwt.strategy';
+import { MfaService } from './mfa/mfa.service';
 
 @Injectable()
 export class AuthService {
@@ -32,6 +33,7 @@ export class AuthService {
     private readonly sessionRepo: Repository<Session>,
     private readonly devices: DevicesService,
     private readonly attempts: LoginAttemptsService,
+    private readonly mfa: MfaService,
   ) {}
 
   async login(dto: LoginDto) {
@@ -76,19 +78,52 @@ export class AuthService {
       }
     }
 
-    try {
-      await this.usersService.update(user.id, { lastLoginAt: new Date() });
-    } catch (err: any) {
-      this.logger.error(`[login] erro updateLastLogin user=${user.id}: ${err?.message}`, err?.stack);
-      throw err;
+    // Painel web de superadmin/presidente: senha sozinha não basta (2FA na própria API,
+    // então chamar a API direto também exige o segundo fator).
+    if (this.mfa.requiresMfa(user.role) && !this.mfa.trustValid(dto.trustToken, user)) {
+      return {
+        mfaRequired: !!user.mfaEnabledAt,
+        mfaSetupRequired: !user.mfaEnabledAt,
+        mfaToken: this.mfa.challenge(user.id),
+      };
     }
+    return this.completeLogin(user);
+  }
 
-    try {
-      return await this.generateTokens(user);
-    } catch (err: any) {
-      this.logger.error(`[login] erro generateTokens user=${user.id}: ${err?.message}`, err?.stack);
-      throw err;
-    }
+  private async completeLogin(user: any, extra: Record<string, any> = {}) {
+    await this.usersService.update(user.id, { lastLoginAt: new Date() });
+    return { ...(await this.generateTokens(user)), ...extra };
+  }
+
+  /** Lê o desafio e confere se o usuário ainda pode entrar (pode ter sido desativado nesse meio-tempo). */
+  private async challengeUser(mfaToken: string) {
+    const user = await this.usersService.findRawById(this.mfa.readChallenge(mfaToken));
+    if (!user || !user.isActive) throw new UnauthorizedException('Conta desativada');
+    return user;
+  }
+
+  async mfaSetup(mfaToken: string) {
+    const user = await this.challengeUser(mfaToken);
+    return this.mfa.setup(user.id);
+  }
+
+  async mfaEnable(mfaToken: string, code: string, remember: boolean, ip?: string) {
+    const user = await this.challengeUser(mfaToken);
+    const { recoveryCodes, mfaEnabledAt } = await this.mfa.enable(user.id, code, ip);
+    user.mfaEnabledAt = mfaEnabledAt;
+    return this.completeLogin(user, {
+      recoveryCodes,
+      ...(remember ? { trustToken: this.mfa.trustToken(user) } : {}),
+    });
+  }
+
+  async mfaVerify(mfaToken: string, code: string, remember: boolean, ip?: string) {
+    const user = await this.challengeUser(mfaToken);
+    const method = await this.mfa.verify(user.id, code, ip);
+    return this.completeLogin(user, {
+      ...(remember ? { trustToken: this.mfa.trustToken(user) } : {}),
+      ...(method === 'recovery' ? { usedRecoveryCode: true } : {}),
+    });
   }
 
   async mobileLogin(dto: MobileLoginDto) {
@@ -194,8 +229,13 @@ export class AuthService {
     });
   }
 
-  async logout(userId: string) {
-    await this.refreshTokenRepo.update({ userId, revoked: false }, { revoked: true });
+  /** Com refreshToken encerra só aquela sessão (ex.: este navegador); sem ele, todas. */
+  async logout(userId: string, refreshToken?: string) {
+    if (refreshToken) {
+      await this.refreshTokenRepo.update({ userId, token: sha256(refreshToken), revoked: false }, { revoked: true });
+    } else {
+      await this.refreshTokenRepo.update({ userId, revoked: false }, { revoked: true });
+    }
     return { message: 'Logout realizado com sucesso' };
   }
 

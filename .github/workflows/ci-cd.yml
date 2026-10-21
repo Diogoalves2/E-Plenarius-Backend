@@ -67,6 +67,7 @@ jobs:
           FRONTEND_URL: http://localhost:3000
           UPLOADS_DIR: /tmp/uploads
           AUDIT_HMAC_KEY: ci-only-hmac-key-0123456789abcdef0123456789abcdef
+          WEB_PROXY_SECRET: ci-only-web-proxy-secret-0123456789abcdef0123
           TRANSCRIPTION_PROVIDER: fake
         run: |
           nohup node dist/main.js > api.log 2>&1 &
@@ -77,6 +78,7 @@ jobs:
         env:
           E2E_API: http://127.0.0.1:3001/api
           E2E_PSQL: psql postgresql://eplenarius:ci_password@localhost:5432/eplenarius
+          E2E_WEB_PROXY_SECRET: ci-only-web-proxy-secret-0123456789abcdef0123
         run: |
           node scripts/create-superadmin.js ci@test.local "CI Superadmin" ci-superadmin-pass
           node test/e2e.mjs ci@test.local ci-superadmin-pass

@@ -68,7 +68,7 @@ export class UsersService {
   async findByChamber(chamberId: string): Promise<User[]> {
     const users = await this.usersRepo.find({
       where: { chamberId },
-      select: ['id', 'name', 'email', 'username', 'role', 'title', 'party', 'initials', 'avatarUrl', 'isActive', 'lastLoginAt', 'audioChannel', 'createdAt'],
+      select: ['id', 'name', 'email', 'username', 'role', 'title', 'party', 'initials', 'avatarUrl', 'isActive', 'lastLoginAt', 'audioChannel', 'mfaEnabledAt', 'createdAt'],
     });
     return sortMesaFirst(users);
   }
@@ -76,7 +76,7 @@ export class UsersService {
   async findById(id: string): Promise<User> {
     const user = await this.usersRepo.findOne({
       where: { id },
-      select: ['id', 'name', 'email', 'username', 'role', 'title', 'party', 'initials', 'avatarUrl', 'isActive', 'lastLoginAt', 'audioChannel', 'chamberId', 'createdAt'],
+      select: ['id', 'name', 'email', 'username', 'role', 'title', 'party', 'initials', 'avatarUrl', 'isActive', 'lastLoginAt', 'audioChannel', 'mfaEnabledAt', 'chamberId', 'createdAt'],
     });
     if (!user) throw new NotFoundException('Usuário não encontrado');
     return user;

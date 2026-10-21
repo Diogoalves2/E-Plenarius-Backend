@@ -5,6 +5,8 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { join } from 'path';
 import { raw } from 'express';
 import { mkdirSync } from 'fs';
+import { isIP } from 'net';
+import { timingSafeEqual } from 'crypto';
 import { AppModule } from './app.module';
 
 @Catch()
@@ -53,6 +55,22 @@ async function bootstrap() {
     if (!req.path.startsWith('/uploads/')) {
       res.setHeader('X-Frame-Options', 'DENY');
       res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
+    }
+    next();
+  });
+  // Login do painel passa pelo servidor do próprio painel (Vercel), que guarda o refresh token
+  // em cookie HttpOnly. Ele repassa o IP real do navegador; só aceitamos esse cabeçalho com o
+  // segredo compartilhado (WEB_PROXY_SECRET) — sem ele, ninguém forja o IP de origem.
+  const proxySecret = process.env.WEB_PROXY_SECRET ?? '';
+  app.use((req: any, _res: any, next: () => void) => {
+    const given = req.headers['x-eplen-proxy'];
+    const clientIp = req.headers['x-eplen-client-ip'];
+    delete req.headers['x-eplen-proxy'];
+    delete req.headers['x-eplen-client-ip'];
+    if (proxySecret.length >= 32 && typeof given === 'string' && given.length === proxySecret.length
+        && timingSafeEqual(Buffer.from(given), Buffer.from(proxySecret))
+        && typeof clientIp === 'string' && isIP(clientIp)) {
+      Object.defineProperty(req, 'ip', { value: clientIp, configurable: true });
     }
     next();
   });

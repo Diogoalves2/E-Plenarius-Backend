@@ -72,6 +72,12 @@ ssh emas 'docker logs -f --tail 100 eplenarius_api'
 - **Âncoras públicas**: `GET /api/public/ancoras` (último elo de cada câmara). O workflow
   `ancoras.yml` grava uma cópia diária na branch `ancoras` do GitHub e falha se uma âncora
   anterior deixar de bater (histórico reescrito no servidor).
+- **2FA (TOTP)** obrigatória no painel para superadmin e presidente. Segredo cifrado no banco
+  (AES-GCM, chave derivada da `AUDIT_HMAC_KEY`). Celular perdido: o superadmin redefine em
+  Câmaras → Membros. Superadmin sem celular e sem códigos de recuperação:
+  `docker exec eplenarius_api node scripts/reset-mfa.js <email>`.
+- **Sessão web**: refresh token em cookie HttpOnly gravado por `/api/auth/*` do painel (Vercel);
+  `WEB_PROXY_SECRET` igual no `.env.prod` e no Vercel (IP real do navegador nos limites e na auditoria).
 - Imagem base: o deploy usa `build --pull` (node:22-alpine sempre atualizado). Postgres:
   `deploy/db-image-update.sh` (instalar em `/usr/local/sbin/eplenarius-db-update`, cron no 1º domingo).
 
