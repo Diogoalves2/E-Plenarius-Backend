@@ -39,7 +39,10 @@ export class ChambersController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'Listar câmaras' })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('superadmin')
+  @ApiOperation({ summary: 'Listar câmaras (superadmin)' })
   findAll() {
     return this.chambersService.findAll();
   }
@@ -82,8 +85,8 @@ export class ChambersController {
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Buscar câmara por ID' })
-  findOne(@Param('id') id: string) {
+  @ApiOperation({ summary: 'Buscar câmara por ID (público: nome, logo, regras do regimento)' })
+  findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.chambersService.findOne(id);
   }
 

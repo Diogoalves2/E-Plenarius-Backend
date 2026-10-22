@@ -404,6 +404,15 @@ const csvRes = await fetch(`${B}/public/chambers/${chA}/dados/votacoes.csv`);
 const csvTxt = await csvRes.text();
 ok(/text\/csv/.test(csvRes.headers.get('content-type')) && csvTxt.includes('sessao;data_sessao;numero'), 'dados abertos em CSV');
 ok((await fetch(`${B}/public/chambers/${chA}/dados/senhas.csv`)).status === 404, 'CSV inexistente = 404');
+const est = (await call('GET', `/public/chambers/${chA}/estatisticas`)).data;
+ok(est.totais?.votacoes === pubList.length && est.totais.aprovadas + est.totais.rejeitadas === est.totais.votacoes, 'estatísticas: totais batem com a lista pública', JSON.stringify(est.totais));
+ok(Array.isArray(est.porMes) && est.porMes.reduce((n, m) => n + m.aprovadas + m.rejeitadas, 0) === est.totais.votacoes, 'estatísticas: série mensal soma o total');
+const estV3 = est.membros?.find(m => m.id === v3.id);
+ok(estV3 && estV3.votos.sim + estV3.votos.nao + estV3.votos.abstencao + estV3.votos.naoVotou === estV3.votos.elegiveis && !('email' in estV3),
+  'estatísticas: votos do vereador consistentes, sem e-mail', JSON.stringify(estV3?.votos));
+ok(est.membros.every(m => m.votos.elegiveis === est.totais.nominais || m.votos.elegiveis <= est.totais.nominais), 'estatísticas: secreta não entra no nominal');
+ok((await call('GET', '/chambers')).status === 401 && (await call('GET', '/chambers', { token: pA.accessToken })).status === 403,
+  'lista de todas as câmaras só para o superadmin');
 
 console.log('\n[blindagem: upload, senha, auditoria de membros, socket]');
 const upload = (path, token, name, type, content) => {

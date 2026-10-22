@@ -139,6 +139,85 @@ export class TransparencyService {
     return { ...this.withRate(m), votos, autorias };
   }
 
+  /**
+   * Painel de votações do portal: totais, série mensal, resultado por tipo de matéria e
+   * comportamento de cada membro nas votações ABERTAS (secreta nunca entra no nominal).
+   */
+  async estatisticas(chamberId: string) {
+    const camara = await this.chamber(chamberId);
+    const [totais] = await this.q(
+      `SELECT COUNT(*)::int AS votacoes,
+              COUNT(*) FILTER (WHERE status = 'aprovado')::int AS aprovadas,
+              COUNT(*) FILTER (WHERE status = 'rejeitado')::int AS rejeitadas,
+              COUNT(*) FILTER (WHERE "votingType" = 'aberta')::int AS nominais,
+              COUNT(*) FILTER (WHERE "votingType" = 'secreta')::int AS secretas,
+              COUNT(DISTINCT "sessionId")::int AS sessoes,
+              MIN("votingClosedAt") AS primeira, MAX("votingClosedAt") AS ultima
+         FROM agenda_items WHERE "chamberId" = $1 AND status IN ${CLOSED}`,
+      [chamberId],
+    );
+    const porMes = await this.q(
+      `SELECT to_char(date_trunc('month', "votingClosedAt" AT TIME ZONE 'America/Sao_Paulo'), 'YYYY-MM') AS mes,
+              COUNT(*) FILTER (WHERE status = 'aprovado')::int AS aprovadas,
+              COUNT(*) FILTER (WHERE status = 'rejeitado')::int AS rejeitadas
+         FROM agenda_items
+        WHERE "chamberId" = $1 AND status IN ${CLOSED} AND "votingClosedAt" >= now() - interval '12 months'
+        GROUP BY 1 ORDER BY 1`,
+      [chamberId],
+    );
+    const porTipo = await this.q(
+      `SELECT COALESCE(NULLIF(type, ''), 'Outros') AS tipo,
+              COUNT(*) FILTER (WHERE status = 'aprovado')::int AS aprovadas,
+              COUNT(*) FILTER (WHERE status = 'rejeitado')::int AS rejeitadas
+         FROM agenda_items WHERE "chamberId" = $1 AND status IN ${CLOSED}
+        GROUP BY 1 ORDER BY COUNT(*) DESC, 1`,
+      [chamberId],
+    );
+    // Votações abertas encerradas; cada membro só "deve" as votações posteriores ao seu cadastro.
+    const votos = await this.q(
+      `WITH it AS (
+         SELECT ai.id, ai.status, ai."votingClosedAt" AS fechada
+           FROM agenda_items ai
+          WHERE ai."chamberId"::text = $1::text AND ai."votingType" = 'aberta' AND ai.status IN ${CLOSED}
+       )
+       SELECT u.id,
+              COUNT(v.id) FILTER (WHERE v.choice = 'sim')::int AS sim,
+              COUNT(v.id) FILTER (WHERE v.choice = 'nao')::int AS nao,
+              COUNT(v.id) FILTER (WHERE v.choice = 'abstencao')::int AS abstencao,
+              COUNT(v.id) FILTER (WHERE (v.choice = 'sim' AND it.status = 'aprovado')
+                                     OR (v.choice = 'nao' AND it.status = 'rejeitado'))::int AS alinhados,
+              (SELECT COUNT(*)::int FROM it WHERE it.fechada >= u."createdAt") AS elegiveis
+         FROM users u
+         LEFT JOIN votes v ON v."userId"::text = u.id::text AND v."agendaItemId"::text IN (SELECT id::text FROM it)
+         LEFT JOIN it ON it.id::text = v."agendaItemId"::text
+        WHERE u."chamberId"::text = $1::text AND u.role IN ('vereador', 'presidente', 'vice_presidente') AND u."isActive" = true
+        GROUP BY u.id`,
+      [chamberId],
+    );
+    const autorias = await this.q(
+      `SELECT "authorUserId" AS id, COUNT(*)::int AS total,
+              COUNT(*) FILTER (WHERE status = 'aprovado')::int AS aprovadas
+         FROM agenda_items WHERE "chamberId" = $1 AND "authorUserId" IS NOT NULL
+        GROUP BY 1`,
+      [chamberId],
+    );
+    const byId = (rows: any[]) => new Map(rows.map(r => [String(r.id), r]));
+    const vMap = byId(votos), aMap = byId(autorias);
+    const membros = sortMesaFirst((await this.presenceStats(chamberId)) as any[]).map(m => {
+      const v = vMap.get(String(m.id)) ?? { sim: 0, nao: 0, abstencao: 0, alinhados: 0, elegiveis: 0 };
+      const votou = v.sim + v.nao + v.abstencao;
+      const a = aMap.get(String(m.id));
+      return {
+        ...this.withRate(m),
+        votos: { sim: v.sim, nao: v.nao, abstencao: v.abstencao, naoVotou: Math.max(v.elegiveis - votou, 0), elegiveis: v.elegiveis },
+        // % dos votos sim/não que acompanharam o resultado final
+        alinhamento: v.sim + v.nao ? Math.round((v.alinhados / (v.sim + v.nao)) * 100) : null,
+        autorias: { total: a?.total ?? 0, aprovadas: a?.aprovadas ?? 0 },
+      };
+    });
+    return { camara, totais, porMes, porTipo, membros };
+  }
+
   // ── Dados abertos (CSV) ──────────────────────────────────────────────────
 
   private csv(rows: any[], cols: [string, string][]): string {

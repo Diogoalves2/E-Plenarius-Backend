@@ -21,7 +21,7 @@ concurrency:
 jobs:
   test:
     name: Build + testes E2E
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     services:
       postgres:
@@ -91,7 +91,7 @@ jobs:
     name: Deploy na VPS
     needs: test
     if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     environment: production
     steps:

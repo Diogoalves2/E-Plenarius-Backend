@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   ancorar:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     env:
       API: https://eplenarius.2-25-152-184.sslip.io/api

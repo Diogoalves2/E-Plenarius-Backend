@@ -40,6 +40,13 @@ export class TransparencyController {
     return this.service.votacoes(id, Number(limit) || 50, Number(offset) || 0);
   }
 
+  @Get('chambers/:chamberId/estatisticas')
+  @Header('Cache-Control', 'public, max-age=60')
+  @ApiOperation({ summary: 'Painel de votações: totais, por mês, por tipo e comportamento de cada membro' })
+  estatisticas(@Param('chamberId', ParseUUIDPipe) id: string) {
+    return this.service.estatisticas(id);
+  }
+
   @Get('chambers/:chamberId/vereadores/:userId')
   @Header('Cache-Control', 'public, max-age=60')
   @ApiOperation({ summary: 'Perfil público do vereador: presença, votos nominais, autorias' })
