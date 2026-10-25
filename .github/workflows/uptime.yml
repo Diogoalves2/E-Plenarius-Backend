@@ -13,22 +13,23 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-24.04
-    timeout-minutes: 8
+    timeout-minutes: 20
     steps:
-      # Oscilação de rede entre o GitHub e a VPS acontece: só alerta se ficar fora ~3 min seguidos.
+      # Oscilação de rede entre o GitHub (EUA) e a VPS acontece — já houve 3,5 min sem rota com o
+      # servidor atendendo normalmente o Brasil. Só alerta se ficar fora ~8 min seguidos.
       - name: API
         run: |
-          for i in 1 2 3 4 5; do
+          for i in 1 2 3 4 5 6 7 8; do
             out=$(curl -s -m 20 -w ' [HTTP %{http_code} em %{time_total}s]' https://eplenarius.2-25-152-184.sslip.io/api/health) &&               echo "$out" | grep -q '"status":"ok"' && { echo "ok $out"; exit 0; }
             echo "tentativa $i: ${out:-sem resposta (rede/timeout)}"
-            sleep 30
+            sleep 40
           done
-          echo "::error::API fora do ar ou com esquema desatualizado há ~3 min"; exit 1
+          echo "::error::API fora do ar ou com esquema desatualizado há ~8 min"; exit 1
       - name: Frontend
         run: |
-          for i in 1 2 3 4 5; do
+          for i in 1 2 3 4 5 6 7 8; do
             code=$(curl -s -m 20 -o /dev/null -w '%{http_code}' https://e-plenarius-frontend.vercel.app/login) && [ "$code" = 200 ] && { echo "ok"; exit 0; }
             echo "tentativa $i: HTTP ${code:-sem resposta}"
-            sleep 30
+            sleep 40
           done
-          echo "::error::Frontend fora do ar há ~3 min"; exit 1
+          echo "::error::Frontend fora do ar há ~8 min"; exit 1
