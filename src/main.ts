@@ -81,6 +81,12 @@ async function bootstrap() {
     setHeaders: (res, filePath) => {
       // Nomes aleatórios: cada upload novo tem URL nova, o navegador pode guardar por 30 dias.
       res.setHeader('Cache-Control', 'public, max-age=2592000');
+      // Leitor de PDF do painel (usado dentro do app) baixa o arquivo via fetch: libera só o painel oficial.
+      const origin = (res as any).req?.headers?.origin;
+      if (origin && frontendOrigins.includes(origin)) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Vary', 'Origin');
+      }
       if (filePath.toLowerCase().endsWith('.svg')) {
         // SVG pode carregar script: servido em sandbox, sem execução.
         res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
