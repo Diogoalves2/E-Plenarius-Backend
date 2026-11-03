@@ -1,4 +1,5 @@
-import { Controller, Get, Post, Patch, Body, Param, UseGuards, ParseUUIDPipe } from '@nestjs/common';
+import { normalizeIp } from '../common/network';
+import { Controller, Get, Post, Patch, Body, Param, UseGuards, ParseUUIDPipe, Ip } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { ChambersService } from './chambers.service';
 import { CreateChamberDto } from './dto/create-chamber.dto';
@@ -66,6 +67,16 @@ export class ChambersController {
   getSettings(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: any) {
     this.access.assertChamber(user, id);
     return this.chambersService.getRules(id);
+  }
+
+  @Get(':id/my-ip')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('presidente', 'vice_presidente', 'superadmin')
+  @ApiOperation({ summary: 'IP público de quem chama (para cadastrar a rede da Câmara)' })
+  myIp(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: any, @Ip() ip: string) {
+    this.access.assertChamber(user, id);
+    return { ip: normalizeIp(ip) };
   }
 
   @Patch(':id/settings')

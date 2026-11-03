@@ -1,4 +1,5 @@
-import { Injectable, NotFoundException, ConflictException, BadRequestException } from "@nestjs/common";
+import { ipInNetworks, parseNetwork } from '../common/network';
+import { Injectable, NotFoundException, ConflictException, BadRequestException, ForbiddenException } from "@nestjs/common";
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { randomBytes } from 'crypto';
@@ -19,6 +20,8 @@ export interface ChamberRules {
   majorityByType: Record<string, Majority>;
   defaultQuorum: number;
   requirePinToVote: boolean;
+  votingNetworkOnly: boolean;
+  votingNetworks: string[];
   autoOpenMic: boolean;
   sessionPhases: SessionPhase[];
 }
@@ -113,7 +116,9 @@ export class ChambersService {
 
   /** Regras regimentais efetivas (com defaults resolvidos). */
   async getRules(chamberId: string): Promise<ChamberRules> {
-    const c = await this.findOne(chamberId);
+    const c = await this.chambersRepo.createQueryBuilder('c')
+      .addSelect('c.votingNetworks').where('c.id = :id', { id: chamberId }).getOne();
+    if (!c) throw new NotFoundException('Câmara não encontrada');
     const members = await this.usersRepo.count({
       where: [
         { chamberId, isActive: true, role: 'vereador' },
@@ -131,6 +136,8 @@ export class ChambersService {
       // Padrão: maioria absoluta dos membros presentes para deliberar.
       defaultQuorum: c.defaultQuorum ?? Math.floor(seats / 2) + 1,
       requirePinToVote: !!c.requirePinToVote,
+      votingNetworkOnly: !!c.votingNetworkOnly,
+      votingNetworks: c.votingNetworks ?? [],
       autoOpenMic: !!c.autoOpenMic,
       sessionPhases: c.sessionPhases?.length ? c.sessionPhases : DEFAULT_PHASES,
     };
@@ -149,9 +156,34 @@ export class ChambersService {
       const keys = dto.sessionPhases.map(p => p.key);
       if (new Set(keys).size !== keys.length) throw new BadRequestException("Fases com chave repetida");
     }
+    if (dto.votingNetworks) {
+      const bad = dto.votingNetworks.find(n => !parseNetwork(n));
+      if (bad) throw new BadRequestException(`Rede inválida: "${bad}". Use um IP (200.1.2.3) ou faixa (200.1.2.0/24).`);
+      dto.votingNetworks = [...new Set(dto.votingNetworks.map(n => n.trim()))];
+    }
+    const networks = dto.votingNetworks ?? (await this.getRules(chamberId)).votingNetworks;
+    if ((dto.votingNetworkOnly ?? c.votingNetworkOnly) && networks.length === 0) {
+      throw new BadRequestException('Informe ao menos uma rede da Câmara antes de restringir a votação.');
+    }
     Object.assign(c, dto);
     await this.chambersRepo.save(c);
     return this.getRules(chamberId);
+  }
+
+  /**
+   * Barreiras antes de votar/registrar presença:
+   * - vereador só pelo tablet aprovado (token do app com device), nunca pelo navegador;
+   * - com "rede da Câmara" ligada, só a partir dos IPs/faixas cadastrados.
+   */
+  async assertVotingAccess(user: { role: string; chamberId: string; device?: string | null }, ip: string) {
+    if (user.role === 'vereador' && !user.device) {
+      throw new ForbiddenException({ statusCode: 403, code: 'DEVICE_REQUIRED', message: 'Voto e presença só pelo tablet autorizado da Câmara.' });
+    }
+    const rules = await this.getRules(user.chamberId);
+    if (rules.votingNetworkOnly && !ipInNetworks(ip, rules.votingNetworks)) {
+      throw new ForbiddenException({ statusCode: 403, code: 'NETWORK_NOT_ALLOWED', message: 'Voto e presença só pela rede (Wi-Fi) da Câmara.' });
+    }
+    return rules;
   }
 
   async findBySlug(slug: string): Promise<Chamber> {

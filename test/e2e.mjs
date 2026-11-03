@@ -52,7 +52,7 @@ const login = async (identifier, password) => {
   const r = (await call('POST', '/auth/login', { body: { identifier, password, trustToken: mfa[identifier]?.trust } })).data;
   return r?.mfaSetupRequired ? enroll(identifier, r.mfaToken) : r;
 };
-const KEY1 = 'k1'.padEnd(40, 'a'), KEY2 = 'k2'.padEnd(40, 'b');
+const KEY1 = 'k1'.padEnd(40, 'a'), KEY2 = 'k2'.padEnd(40, 'b'), KEY3 = 'k3'.padEnd(40, 'c'), KEY4 = 'k4'.padEnd(40, 'd');
 
 console.log('\n[setup]');
 const sa = await login(SA_EMAIL, SA_PASS);
@@ -147,12 +147,25 @@ const vote1 = await call('POST', '/voting/cast', { token: mob.accessToken, body:
 ok(vote1.status === 201 && /^0x[0-9a-f]{16}$/.test(vote1.data?.hash), 'v1 vota (comprovante 0x+16hex)');
 ok((await call('POST', '/voting/cast', { token: mob.accessToken, body: { agendaItemId: item.id, choice: 'nao' } })).status === 409, 'voto duplo = 409');
 const w2 = await login('v2@t.com', 'senhaVer123'), w3 = await login('v3@t.com', 'senhaVer123');
-await call('POST', `/sessions/${sess.id}/presence`, { token: w2.accessToken });
-await call('POST', `/sessions/${sess.id}/presence`, { token: w3.accessToken });
+const tablet = async (u, pin, key) => {
+  await call('PATCH', `/users/${u.id}/pin`, { token: pA.accessToken, body: { pin } });
+  await call('POST', '/auth/mobile-login', { body: { userId: u.id, pin, deviceKey: key, deviceName: 'Tablet' } });
+  const pend = (await call('GET', `/devices/chamber/${chA}`, { token: pA.accessToken })).data.filter(d => d.status === 'pendente');
+  for (const d of pend) await call('PATCH', `/devices/${d.id}/approve`, { token: pA.accessToken, body: {} });
+  return (await call('POST', '/auth/mobile-login', { body: { userId: u.id, pin, deviceKey: key, deviceName: 'Tablet' } })).data;
+};
+const t2 = await tablet(v2, '582941', KEY3), t3 = await tablet(v3, '627381', KEY4);
+ok(!!t2?.accessToken && !!t3?.accessToken, 'vereadores 2 e 3 entram pelos tablets aprovados');
+const webPres = await call('POST', `/sessions/${sess.id}/presence`, { token: w2.accessToken });
+ok(webPres.status === 403 && webPres.data?.code === 'DEVICE_REQUIRED', 'vereador não marca presença pelo navegador (só tablet)', JSON.stringify(webPres.data));
+const webVote = await call('POST', '/voting/cast', { token: w2.accessToken, body: { agendaItemId: item.id, choice: 'sim' } });
+ok(webVote.status === 403 && webVote.data?.code === 'DEVICE_REQUIRED', 'vereador não vota pelo navegador (só tablet)');
+await call('POST', `/sessions/${sess.id}/presence`, { token: t2.accessToken });
+await call('POST', `/sessions/${sess.id}/presence`, { token: t3.accessToken });
 const conc = await Promise.all([
-  call('POST', '/voting/cast', { token: w2.accessToken, body: { agendaItemId: item.id, choice: 'nao' } }),
-  call('POST', '/voting/cast', { token: w3.accessToken, body: { agendaItemId: item.id, choice: 'sim' } }),
-  call('POST', '/voting/cast', { token: w3.accessToken, body: { agendaItemId: item.id, choice: 'sim' } }),
+  call('POST', '/voting/cast', { token: t2.accessToken, body: { agendaItemId: item.id, choice: 'nao' } }),
+  call('POST', '/voting/cast', { token: t3.accessToken, body: { agendaItemId: item.id, choice: 'sim' } }),
+  call('POST', '/voting/cast', { token: t3.accessToken, body: { agendaItemId: item.id, choice: 'sim' } }),
 ]);
 ok(conc.filter(c => c.status === 201).length === 2 && conc.filter(c => c.status === 409).length === 1, 'votos simultâneos: 2 aceitos, duplicado 409', conc.map(c => c.status).join(','));
 const pub = (await call('GET', `/agenda/${item.id}`)).data;
@@ -169,8 +182,8 @@ ok(ver.valid === true, 'verificação da votação: íntegra', JSON.stringify(ve
 console.log('\n[votação aberta]');
 const item2 = (await call('POST', '/agenda', { token: pA.accessToken, body: { sessionId: sess.id, chamberId: chA, number: 'PL 2/2026', type: 'Projeto de Lei', title: 'Aberto', authorName: 'X', votingType: 'aberta', quorumMinimum: 1, orderIndex: 1 } })).data;
 await call('PATCH', `/voting/open/${item2.id}`, { token: pA.accessToken });
-await call('POST', '/voting/cast', { token: w2.accessToken, body: { agendaItemId: item2.id, choice: 'sim' } });
-await call('POST', '/voting/cast', { token: w3.accessToken, body: { agendaItemId: item2.id, choice: 'abstencao' } });
+await call('POST', '/voting/cast', { token: t2.accessToken, body: { agendaItemId: item2.id, choice: 'sim' } });
+await call('POST', '/voting/cast', { token: t3.accessToken, body: { agendaItemId: item2.id, choice: 'abstencao' } });
 const pub2 = (await call('GET', `/agenda/${item2.id}`)).data;
 ok(pub2.votesYes === 1 && pub2.countsHidden === false, 'votação aberta mostra placar parcial');
 await call('PATCH', `/voting/close/${item2.id}`, { token: pA.accessToken });
@@ -192,16 +205,16 @@ ok(qOpen.status === 400 && /Quórum insuficiente/.test(qOpen.data?.message), 'vo
 const eItem = (await agendaItem({ type: 'Emenda à Lei Orgânica', title: 'Emenda' })).data;
 ok(eItem.majority === 'dois_tercos', 'maioria padrão por tipo de matéria (Emenda → 2/3)');
 await call('PATCH', `/voting/open/${eItem.id}`, { token: pA.accessToken });
-for (const t of [mob, w2, w3]) await call('POST', '/voting/cast', { token: t.accessToken, body: { agendaItemId: eItem.id, choice: 'sim' } });
+for (const t of [mob, t2, t3]) await call('POST', '/voting/cast', { token: t.accessToken, body: { agendaItemId: eItem.id, choice: 'sim' } });
 const eClosed = (await call('PATCH', `/voting/close/${eItem.id}`, { token: pA.accessToken })).data;
 ok(eClosed.status === 'rejeitado' && eClosed.requiredVotes === 4 && /exige 4 de 5/.test(eClosed.resultExplanation), '3 SIM não aprovam 2/3 de 5 cadeiras (exige 4)', eClosed.resultExplanation);
 
 const tItem = (await agendaItem({ title: 'Empate' })).data;
 await call('PATCH', `/voting/open/${tItem.id}`, { token: pA.accessToken });
-await call('POST', '/voting/cast', { token: w2.accessToken, body: { agendaItemId: tItem.id, choice: 'sim' } });
+await call('POST', '/voting/cast', { token: t2.accessToken, body: { agendaItemId: tItem.id, choice: 'sim' } });
 const presEarly = await call('POST', '/voting/cast', { token: pA.accessToken, body: { agendaItemId: tItem.id, choice: 'sim' } });
 ok(presEarly.status === 403 && /empate/.test(presEarly.data?.message), 'presidente não vota sem empate (regra tie_only)', presEarly.data?.message);
-await call('POST', '/voting/cast', { token: w3.accessToken, body: { agendaItemId: tItem.id, choice: 'nao' } });
+await call('POST', '/voting/cast', { token: t3.accessToken, body: { agendaItemId: tItem.id, choice: 'nao' } });
 const tieClose = await call('PATCH', `/voting/close/${tItem.id}`, { token: pA.accessToken });
 ok(tieClose.status === 409 && tieClose.data?.code === 'TIE_NEEDS_PRESIDENT', 'empate exige voto do presidente antes de encerrar', JSON.stringify(tieClose.data));
 ok((await call('POST', '/voting/cast', { token: pA.accessToken, body: { agendaItemId: tItem.id, choice: 'sim' } })).status === 201, 'presidente desempata');
@@ -217,8 +230,10 @@ const ordem = (await call('GET', `/users/chamber/${chA}`, { token: pA.accessToke
 ok(ordem.slice(0, 5).join(',') === 'Pres Alfa,Vice Alfa,Ver 3,Ver 1,Ver 2', 'painel: Mesa Diretora primeiro, depois ordem alfabética', ordem.join(','));
 const ordemTablet = (await call('GET', '/chambers/by-slug/camara-alfa/vereadores')).data.map(u => u.name);
 ok(ordemTablet.join(',') === 'Pres Alfa,Vice Alfa,Ver 3,Ver 1,Ver 2', 'tablet: Mesa Diretora primeiro, depois ordem alfabética', ordemTablet.join(','));
+const vpPass = (await call('POST', '/auth/login', { body: { identifier: 'vp@t.com', password: 'senhaVice123' } })).data;
+ok(vpPass.mfaSetupRequired === true && !vpPass.accessToken, 'vice-presidente: senha sozinha não entra no painel (2FA obrigatória)');
 const wVp = await login('vp@t.com', 'senhaVice123');
-ok(!!wVp?.accessToken, 'vice entra no painel');
+ok(!!wVp?.accessToken, 'vice entra no painel com 2FA');
 ok((await call('PATCH', `/chambers/${chA}/settings`, { token: wVp.accessToken, body: { totalSeats: 7 } })).status === 403, 'vice não altera regras do regimento');
 ok((await call('POST', '/users', { token: wVp.accessToken, body: { chamberId: chA, name: 'X', email: 'x2@t.com', password: 'senhaX12345', role: 'vereador' } })).status === 403, 'vice não cadastra membros');
 ok((await call('POST', '/sessions', { token: wVp.accessToken, body: { chamberId: chA, number: 5, type: 'ordinaria', date: '2026-10-18' } })).status === 403, 'vice não cria sessão');
@@ -226,10 +241,10 @@ await call('POST', `/sessions/${sess.id}/presence`, { token: wVp.accessToken });
 ok((await call('DELETE', '/sessions/leave', { token: pA.accessToken })).status === 200, 'presidente sai da sessão (vice passa a presidir)');
 const vItem = (await agendaItem({ title: 'Vice preside' })).data;
 ok((await call('PATCH', `/voting/open/${vItem.id}`, { token: wVp.accessToken })).status === 200, 'vice abre votação');
-await call('POST', '/voting/cast', { token: w2.accessToken, body: { agendaItemId: vItem.id, choice: 'sim' } });
+await call('POST', '/voting/cast', { token: t2.accessToken, body: { agendaItemId: vItem.id, choice: 'sim' } });
 const vpEarly = await call('POST', '/voting/cast', { token: wVp.accessToken, body: { agendaItemId: vItem.id, choice: 'sim' } });
 ok(vpEarly.status === 403 && /quem preside/.test(vpEarly.data?.message), 'vice presidindo segue a regra do desempate', vpEarly.data?.message);
-await call('POST', '/voting/cast', { token: w3.accessToken, body: { agendaItemId: vItem.id, choice: 'nao' } });
+await call('POST', '/voting/cast', { token: t3.accessToken, body: { agendaItemId: vItem.id, choice: 'nao' } });
 const vTie = await call('PATCH', `/voting/close/${vItem.id}`, { token: wVp.accessToken });
 ok(vTie.status === 409 && vTie.data?.code === 'TIE_NEEDS_PRESIDENT', 'empate exige voto de quem preside (vice)');
 ok((await call('POST', '/voting/cast', { token: wVp.accessToken, body: { agendaItemId: vItem.id, choice: 'nao' } })).status === 201, 'vice desempata');
@@ -250,6 +265,25 @@ ok((await call('POST', '/voting/cast', { token: mob.accessToken, body: { agendaI
 ok((await call('POST', '/voting/cast', { token: mob.accessToken, body: { agendaItemId: pItem.id, choice: 'sim', pin: '482913' } })).status === 201, 'voto confirmado com PIN correto');
 await call('PATCH', `/voting/close/${pItem.id}`, { token: pA.accessToken });
 await call('PATCH', `/chambers/${chA}/settings`, { token: pA.accessToken, body: { requirePinToVote: false, presidentVoteRule: 'always' } });
+
+const semRede = await call('PATCH', `/chambers/${chA}/settings`, { token: pA.accessToken, body: { votingNetworkOnly: true, votingNetworks: [] } });
+ok(semRede.status === 400, 'restringir à rede exige ao menos uma rede cadastrada');
+ok((await call('PATCH', `/chambers/${chA}/settings`, { token: pA.accessToken, body: { votingNetworks: ['999.1.1.1'] } })).status === 400, 'rede inválida recusada');
+const myIp = (await call('GET', `/chambers/${chA}/my-ip`, { token: pA.accessToken })).data?.ip;
+ok(!!myIp, 'painel descobre o IP atual da Câmara', String(myIp));
+await call('PATCH', `/chambers/${chA}/settings`, { token: pA.accessToken, body: { votingNetworkOnly: true, votingNetworks: ['203.0.113.0/24'] } });
+const fora = await call('POST', `/sessions/${sess.id}/presence`, { token: t2.accessToken });
+ok(fora.status === 403 && fora.data?.code === 'NETWORK_NOT_ALLOWED', 'fora da rede da Câmara: presença recusada', JSON.stringify(fora.data));
+const nItem = (await agendaItem({ title: 'Rede' })).data;
+await call('PATCH', `/voting/open/${nItem.id}`, { token: pA.accessToken });
+ok((await call('POST', '/voting/cast', { token: t2.accessToken, body: { agendaItemId: nItem.id, choice: 'sim' } })).data?.code === 'NETWORK_NOT_ALLOWED', 'fora da rede da Câmara: voto recusado');
+await call('PATCH', `/chambers/${chA}/settings`, { token: pA.accessToken, body: { votingNetworks: ['203.0.113.0/24', myIp] } });
+ok((await call('POST', '/voting/cast', { token: t2.accessToken, body: { agendaItemId: nItem.id, choice: 'sim' } })).status === 201, 'na rede da Câmara: voto aceito');
+await call('PATCH', `/voting/close/${nItem.id}`, { token: pA.accessToken });
+const pubCam = (await call('GET', `/chambers/${chA}`)).data;
+ok(!('votingNetworks' in pubCam), 'rota pública da câmara não revela as redes cadastradas');
+await call('PATCH', `/chambers/${chA}/settings`, { token: pA.accessToken, body: { votingNetworkOnly: false } });
+ok((await call('POST', `/expediente/sessions/${sess.id}/aparte/solicitar`, { token: pA.accessToken })).status === 403, 'aparte só para membros (presidente concede, não pede)');
 
 console.log('\n[roteiro + expediente]');
 ok((await call('PATCH', `/sessions/${sess.id}/phase`, { token: pB.accessToken, body: { phase: 'ordem_do_dia' } })).status === 403, 'presidente B não muda fase de A');
@@ -273,7 +307,7 @@ sock.emit('session:join', { sessionId: sess.id });
 for (const ev of ['voting:opened', 'vote:cast', 'voting:closed']) sock.on(ev, d => events.push([ev, d]));
 await new Promise(r => setTimeout(r, 300));
 await call('PATCH', `/voting/open/${sItem.id}`, { token: pA.accessToken });
-await call('POST', '/voting/cast', { token: w3.accessToken, body: { agendaItemId: sItem.id, choice: 'nao' } });
+await call('POST', '/voting/cast', { token: t3.accessToken, body: { agendaItemId: sItem.id, choice: 'nao' } });
 const late = io(`${WS}/voting`, { transports: ['websocket'] }); // entra no meio da votação
 const lateState = await new Promise(r => { late.on('connect', () => late.emit('session:join', { sessionId: sess.id })); late.on('voting:state', r); });
 await call('PATCH', `/voting/close/${sItem.id}`, { token: pA.accessToken });

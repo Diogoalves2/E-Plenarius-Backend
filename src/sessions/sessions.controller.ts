@@ -1,5 +1,6 @@
-import { Controller, Get, Post, Delete, Param, Body, Patch, UseGuards, HttpCode, ParseUUIDPipe, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Param, Body, Patch, UseGuards, HttpCode, ParseUUIDPipe, BadRequestException, Ip } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { ChambersService } from '../chambers/chambers.service';
 import { SessionsService } from './sessions.service';
 import { CreateSessionDto } from './dto/create-session.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -27,6 +28,7 @@ export class SessionsController {
     private readonly sessionsService: SessionsService,
     private readonly access: ChamberAccessService,
     private readonly ataService: AtaService,
+    private readonly chambers: ChambersService,
   ) {}
 
   @Post()
@@ -115,9 +117,10 @@ export class SessionsController {
 
   @Post(':id/presence')
   @ApiOperation({ summary: 'Confirmar presença na sessão' })
-  async confirmPresence(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: any) {
+  async confirmPresence(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: any, @Ip() ip: string) {
     const session = await this.access.assertSession(user, id);
     if (session.status === 'encerrada') throw new BadRequestException('Sessão já encerrada');
+    await this.chambers.assertVotingAccess(user, ip);
     return this.sessionsService.confirmPresence(id, user.id);
   }
 

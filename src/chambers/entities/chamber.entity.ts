@@ -67,6 +67,14 @@ export class Chamber {
   @Column({ default: false })
   requirePinToVote: boolean;
 
+  /** Voto e presença só a partir das redes (IPs/faixas) da Câmara. */
+  @Column({ default: false })
+  votingNetworkOnly: boolean;
+
+  /** IPs ou faixas CIDR permitidos. Oculto no select padrão (rota pública da câmara). */
+  @Column({ type: 'jsonb', nullable: true, select: false })
+  votingNetworks: string[] | null;
+
   /** Abre o microfone na mesa de som ao liberar o tempo de fala (bridge). */
   @Column({ default: false })
   autoOpenMic: boolean;

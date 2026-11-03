@@ -162,7 +162,7 @@ export class ExpedienteController {
 
   @Post(':sessionId/aparte/solicitar')
   @UseGuards(RolesGuard)
-  @Roles('vereador', 'vice_presidente', 'secretaria')
+  @Roles('vereador', 'vice_presidente')
   @HttpCode(200)
   @ApiOperation({ summary: 'Vereador solicita aparte' })
   solicitarAparte(
@@ -174,7 +174,7 @@ export class ExpedienteController {
 
   @Delete(':sessionId/aparte/cancelar')
   @UseGuards(RolesGuard)
-  @Roles('vereador', 'vice_presidente', 'secretaria')
+  @Roles('vereador', 'vice_presidente')
   @ApiOperation({ summary: 'Vereador cancela solicitação de aparte' })
   cancelarAparte(
     @Param('sessionId') sessionId: string,

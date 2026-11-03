@@ -216,7 +216,7 @@ export class VotingService {
 
   async castVote(dto: CastVoteDto, user: any, ipAddress: string) {
     if (!VOTER_ROLES.includes(user.role)) throw new ForbiddenException('Seu perfil não vota');
-    const rules = await this.chambers.getRules(user.chamberId);
+    const rules = await this.chambers.assertVotingAccess(user, ipAddress);
 
     // Confirmação do voto com o PIN do vereador (tablet esquecido aberto não vota sozinho).
     if (rules.requirePinToVote) {

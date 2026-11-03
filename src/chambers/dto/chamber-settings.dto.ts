@@ -37,6 +37,14 @@ export class ChamberSettingsDto {
   @ApiPropertyOptional() @IsOptional() @IsBoolean()
   autoOpenMic?: boolean;
 
+  @ApiPropertyOptional({ description: 'Voto e presença só pela rede da Câmara' })
+  @IsOptional() @IsBoolean()
+  votingNetworkOnly?: boolean;
+
+  @ApiPropertyOptional({ type: [String], example: ['200.1.2.3', '2804:abcd:1234::/48'] })
+  @IsOptional() @IsArray() @ArrayMaxSize(10) @IsString({ each: true }) @MaxLength(64, { each: true })
+  votingNetworks?: string[];
+
   @ApiPropertyOptional({ type: [SessionPhaseDto], nullable: true })
   @IsOptional() @IsArray() @ArrayMaxSize(15) @ValidateNested({ each: true }) @Type(() => SessionPhaseDto)
   sessionPhases?: SessionPhaseDto[] | null;

@@ -25,6 +25,7 @@ function originAllowed(origin: string | undefined): boolean {
   // allowRequest vale também para WebSocket puro (o navegador não aplica CORS a ele)
   allowRequest: (req: any, cb: (err: string | null | undefined, ok: boolean) => void) => cb(null, originAllowed(req.headers.origin)),
   namespace: '/voting',
+  maxHttpBufferSize: 16_000,
 })
 export class VotingGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()

@@ -14,8 +14,8 @@ import { sha256 } from '../../common/integrity';
 import { decryptSecret, encryptSecret, secretBoxAvailable } from '../../common/secret-box';
 import { base32Encode, otpauthUrl, verifyTotp } from './totp';
 
-/** Perfis do painel web com 2FA obrigatória. Vereadores (tablet) usam PIN + tablet aprovado. */
-export const MFA_ROLES = ['superadmin', 'presidente'];
+/** Perfis do painel web com 2FA obrigatória (quem conduz a sessão ou administra). Tablet: PIN + tablet aprovado. */
+export const MFA_ROLES = ['superadmin', 'presidente', 'vice_presidente'];
 
 const RECOVERY_COUNT = 10;
 const RECOVERY_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789'; // sem 0/o, 1/l/i
