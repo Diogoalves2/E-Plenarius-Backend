@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Logger, OnModuleDestroy, OnModuleInit, Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Session } from './entities/session.entity';
@@ -10,7 +10,8 @@ import { AuditService } from '../audit/audit.service';
 import { ChambersService } from '../chambers/chambers.service';
 
 @Injectable()
-export class SessionsService {
+export class SessionsService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(SessionsService.name);
   constructor(
     @InjectRepository(Session)
     private readonly sessionsRepo: Repository<Session>,
@@ -106,7 +107,7 @@ export class SessionsService {
     return this.sessionsRepo.save(session);
   }
 
-  async end(id: string, userId: string): Promise<Session> {
+  async end(id: string, userId: string | null, auto?: { idleHours: number; lastActivity: string }): Promise<Session> {
     const session = await this.findOne(id);
     if (session.status !== 'em_andamento')
       throw new BadRequestException('Sessão não está em andamento');
@@ -118,11 +119,52 @@ export class SessionsService {
       ? Math.round((session.endedAt.getTime() - new Date(session.startedAt).getTime()) / 60000)
       : null;
     await this.audit.log({
-      chamberId: session.chamberId, sessionId: id, userId, action: 'session:ended',
-      detail: { number: session.number, durationMin: minutes },
+      chamberId: session.chamberId, sessionId: id, userId: userId ?? undefined,
+      action: auto ? 'session:auto_ended' : 'session:ended',
+      detail: { number: session.number, durationMin: minutes, ...(auto ?? {}) },
     });
     this.gateway.emitToSession(id, 'session:phase', { sessionId: id, phase: null, ended: true });
     return saved;
+  }
+
+  private idleTimer?: NodeJS.Timeout;
+
+  /**
+   * Sessão esquecida aberta permite presença/voto fora de hora. Encerra sozinha depois de
+   * SESSION_IDLE_HOURS (padrão 12) sem nenhuma atividade: auditoria, presença ou voto.
+   * Uma sessão longa mas ativa nunca é encerrada. 0 desliga.
+   */
+  onModuleInit() {
+    const hours = Number(process.env.SESSION_IDLE_HOURS ?? 12);
+    if (!(hours > 0)) return;
+    const every = Math.min(10 * 60_000, Math.max(5_000, (hours * 3_600_000) / 4));
+    const run = () => this.endIdleSessions(hours).catch(e => this.logger.error(`[sessão ociosa] ${e?.message}`));
+    setTimeout(run, Math.min(every, 60_000));
+    this.idleTimer = setInterval(run, every);
+  }
+
+  onModuleDestroy() {
+    if (this.idleTimer) clearInterval(this.idleTimer);
+  }
+
+  async endIdleSessions(hours: number): Promise<string[]> {
+    const rows: { id: string; last: string }[] = await this.sessionsRepo.query(
+      `SELECT s.id, GREATEST(
+          COALESCE(s."startedAt", s."createdAt"),
+          COALESCE((SELECT MAX(a."createdAt") FROM audit_logs a WHERE a."sessionId"::text = s.id::text), 'epoch'),
+          COALESCE((SELECT MAX(p."confirmedAt") FROM session_presences p WHERE p."sessionId"::text = s.id::text), 'epoch'),
+          COALESCE((SELECT MAX(v."createdAt") FROM votes v WHERE v."sessionId"::text = s.id::text), 'epoch')
+        ) AS last
+         FROM sessions s WHERE s.status = 'em_andamento'`,
+    );
+    const ended: string[] = [];
+    for (const r of rows) {
+      if (Date.now() - new Date(r.last).getTime() < hours * 3_600_000) continue;
+      await this.end(r.id, null, { idleHours: hours, lastActivity: new Date(r.last).toISOString() });
+      this.logger.warn(`[sessão ociosa] sessão ${r.id} encerrada após ${hours}h sem atividade`);
+      ended.push(r.id);
+    }
+    return ended;
   }
 
   async confirmPresence(sessionId: string, userId: string): Promise<SessionPresence> {

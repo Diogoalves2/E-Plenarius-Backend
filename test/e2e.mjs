@@ -284,6 +284,14 @@ const pubCam = (await call('GET', `/chambers/${chA}`)).data;
 ok(!('votingNetworks' in pubCam), 'rota pública da câmara não revela as redes cadastradas');
 await call('PATCH', `/chambers/${chA}/settings`, { token: pA.accessToken, body: { votingNetworkOnly: false } });
 ok((await call('POST', `/expediente/sessions/${sess.id}/aparte/solicitar`, { token: pA.accessToken })).status === 403, 'aparte só para membros (presidente concede, não pede)');
+const stream = (body) => call('PATCH', `/sessions/${sess.id}/stream`, { token: pA.accessToken, body });
+ok((await stream({ youtubeUrl: 'javascript:alert(1)' })).status === 400, 'transmissão: link javascript: recusado');
+ok((await stream({ youtubeUrl: 'https://youtube.com.golpe.com/watch?v=abcdefg' })).status === 400, 'transmissão: domínio falso recusado');
+ok((await stream({ youtubeThumbnailUrl: 'https://golpe.com/capa.png' })).status === 400, 'transmissão: capa de site externo recusada');
+ok((await stream({ youtubeUrl: 'https://www.youtube.com/@camaraalfa/live', youtubeThumbnailUrl: null })).status === 200, 'transmissão: link do canal ao vivo aceito');
+ok((await call('PATCH', `/users/${v1.id}`, { token: pA.accessToken, body: { username: 'pb@t.com' } })).status === 400, 'usuário não pode imitar e-mail de outra pessoa');
+ok((await call('PATCH', '/users/me', { token: w3.accessToken, body: { username: 'nome com espaço' } })).status === 400, 'usuário com espaço recusado');
+ok((await call('PATCH', '/users/me', { token: w3.accessToken, body: { username: 'ver.tres' } })).status === 200, 'usuário válido aceito');
 
 console.log('\n[roteiro + expediente]');
 ok((await call('PATCH', `/sessions/${sess.id}/phase`, { token: pB.accessToken, body: { phase: 'ordem_do_dia' } })).status === 403, 'presidente B não muda fase de A');

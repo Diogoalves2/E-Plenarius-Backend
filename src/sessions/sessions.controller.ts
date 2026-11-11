@@ -3,6 +3,7 @@ import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { ChambersService } from '../chambers/chambers.service';
 import { SessionsService } from './sessions.service';
 import { CreateSessionDto } from './dto/create-session.dto';
+import { UpdateStreamDto } from './dto/update-stream.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -108,7 +109,7 @@ export class SessionsController {
   @ApiOperation({ summary: 'Atualizar dados da transmissão (YouTube)' })
   async updateStream(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() body: { youtubeUrl?: string; youtubeThumbnailUrl?: string },
+    @Body() body: UpdateStreamDto,
     @CurrentUser() user: any,
   ) {
     await this.access.assertSession(user, id);

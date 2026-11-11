@@ -18,7 +18,7 @@ export class CreateUserDto {
   @ApiPropertyOptional({ example: 'beatriz' })
   @IsOptional()
   @IsString()
-  @MinLength(3)
+  @Matches(/^[a-zA-Z0-9._-]{3,30}$/, { message: 'Usuário: 3 a 30 letras, números, ponto, hífen ou sublinhado (sem espaços nem @).' })
   username?: string;
 
   @ApiProperty({ minLength: 8 })

@@ -1,5 +1,5 @@
 import { ApiPropertyOptional, ApiProperty } from '@nestjs/swagger';
-import { IsBoolean, IsEmail, IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsBoolean, IsEmail, IsIn, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
 import { UserRole } from '../entities/user.entity';
 
 /** Campos editáveis via PATCH /users/:id. Qualquer outro campo é rejeitado pelo ValidationPipe. */
@@ -11,6 +11,7 @@ export class UpdateUserDto {
   email?: string;
 
   @ApiPropertyOptional({ nullable: true }) @IsOptional() @IsString()
+  @Matches(/^[a-zA-Z0-9._-]{3,30}$/, { message: 'Usuário: 3 a 30 letras, números, ponto, hífen ou sublinhado (sem espaços nem @).' })
   username?: string | null;
 
   @ApiPropertyOptional({ enum: ['presidente', 'vice_presidente', 'vereador', 'secretaria'] })
@@ -44,4 +45,11 @@ export class ChangePasswordDto {
 export class AdminResetPasswordDto {
   @ApiProperty({ minLength: 8 }) @IsString() @MinLength(8, { message: 'A senha deve ter pelo menos 8 caracteres.' })
   newPassword: string;
+}
+
+/** PATCH /users/me — o próprio usuário troca o nome de usuário ('' remove). */
+export class UpdateMeDto {
+  @ApiPropertyOptional({ nullable: true }) @IsOptional() @IsString()
+  @Matches(/^$|^[a-zA-Z0-9._-]{3,30}$/, { message: 'Usuário: 3 a 30 letras, números, ponto, hífen ou sublinhado (sem espaços nem @).' })
+  username?: string;
 }

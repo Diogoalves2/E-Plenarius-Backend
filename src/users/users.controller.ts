@@ -3,7 +3,7 @@ import { Controller, Get, Post, Patch, Body, Param, UseGuards, BadRequestExcepti
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
-import { UpdateUserDto, ChangePasswordDto, AdminResetPasswordDto } from './dto/update-user.dto';
+import { UpdateUserDto, ChangePasswordDto, AdminResetPasswordDto, UpdateMeDto } from './dto/update-user.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -52,7 +52,7 @@ export class UsersController {
   @ApiOperation({ summary: 'Atualizar perfil próprio (nome de usuário)' })
   updateMe(
     @CurrentUser() user: any,
-    @Body() body: { username?: string },
+    @Body() body: UpdateMeDto,
   ) {
     return this.usersService.updateMe(user.id, body);
   }
