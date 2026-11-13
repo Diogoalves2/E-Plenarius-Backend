@@ -2,6 +2,7 @@ import { normalizeIp } from '../common/network';
 import { Controller, Get, Post, Patch, Body, Param, UseGuards, ParseUUIDPipe, Ip } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { ChambersService } from './chambers.service';
+import { AdminOverviewService } from './admin-overview.service';
 import { CreateChamberDto } from './dto/create-chamber.dto';
 import { SetupChamberDto } from './dto/setup-chamber.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -19,7 +20,17 @@ export class ChambersController {
     private readonly chambersService: ChambersService,
     private readonly access: ChamberAccessService,
     private readonly audit: AuditService,
+    private readonly overviewService: AdminOverviewService,
   ) {}
+
+  @Get('admin/overview')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('superadmin')
+  @ApiOperation({ summary: 'Visão geral do sistema: câmaras, sessões ao vivo, pendências (superadmin)' })
+  overview() {
+    return this.overviewService.overview();
+  }
 
   @Post('setup')
   @ApiBearerAuth()

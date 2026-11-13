@@ -455,6 +455,14 @@ ok(estV3 && estV3.votos.sim + estV3.votos.nao + estV3.votos.abstencao + estV3.vo
 ok(est.membros.every(m => m.votos.elegiveis === est.totais.nominais || m.votos.elegiveis <= est.totais.nominais), 'estatísticas: secreta não entra no nominal');
 ok((await call('GET', '/chambers')).status === 401 && (await call('GET', '/chambers', { token: pA.accessToken })).status === 403,
   'lista de todas as câmaras só para o superadmin');
+const ovNo = [(await call('GET', '/chambers/admin/overview')).status, (await call('GET', '/chambers/admin/overview', { token: pA.accessToken })).status];
+ok(ovNo[0] === 401 && ovNo[1] === 403, 'visão geral do sistema só para o superadmin', ovNo.join(','));
+const ov = (await call('GET', '/chambers/admin/overview', { token: sa.accessToken })).data;
+const ovA = ov?.chambers?.find(c => c.id === pA.user.chamberId);
+ok(ovA && ovA.members > 0 && ovA.itemsVoted > 0 && ovA.votes > 0 && ovA.leaders.some(l => l.role === 'presidente') && !JSON.stringify(ov).includes('mfaSecret'),
+  'visão geral: números e liderança por câmara', JSON.stringify(ovA && { m: ovA.members, i: ovA.itemsVoted, v: ovA.votes }));
+ok(Array.isArray(ov.live) && Array.isArray(ov.alerts) && ov.system?.totals?.votes >= ovA.votes && ov.system.totals.chambers === ov.chambers.length,
+  'visão geral: sessões ao vivo, pendências e totais do sistema');
 
 console.log('\n[blindagem: upload, senha, auditoria de membros, socket]');
 const upload = (path, token, name, type, content) => {
