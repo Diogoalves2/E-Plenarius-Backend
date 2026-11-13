@@ -21,6 +21,15 @@ export class UsersService {
     private readonly audit: AuditService,
   ) {}
 
+  static readonly CHAMBER_SUSPENDED = 'Acesso suspenso: esta Câmara está temporariamente desativada. Fale com o suporte do E-Plenarius.';
+
+  /** Câmara suspensa pelo superadmin (ex.: falta de pagamento) bloqueia todos os seus usuários. */
+  async isChamberActive(chamberId: string | null | undefined): Promise<boolean> {
+    if (!chamberId) return true;
+    const rows = await this.usersRepo.query(`SELECT "isActive" FROM chambers WHERE id::text = $1`, [String(chamberId)]);
+    return rows.length > 0 && rows[0].isActive === true;
+  }
+
   /** Registra na auditoria da câmara do usuário-alvo (superadmin sem câmara não tem trilha). */
   private async trail(target: { id: string; chamberId: string | null }, actor: ActorCtx | undefined, action: string, detail?: Record<string, any>) {
     if (!target.chamberId) return;

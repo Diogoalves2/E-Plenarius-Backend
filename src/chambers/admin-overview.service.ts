@@ -31,7 +31,10 @@ export class AdminOverviewService {
           (SELECT count(*) FROM sessions s WHERE s."chamberId"::text = c.id::text AND s.status = 'encerrada')::int AS "sessionsDone",
           (SELECT max(COALESCE(s."endedAt", s."startedAt")) FROM sessions s WHERE s."chamberId"::text = c.id::text) AS "lastSessionAt",
           (SELECT count(*) FROM agenda_items a WHERE a."chamberId"::text = c.id::text AND a.status IN ('aprovado','rejeitado'))::int AS "itemsVoted",
-          (SELECT count(*) FROM votes v WHERE v."chamberId"::text = c.id::text)::int AS votes
+          (SELECT count(*) FROM votes v WHERE v."chamberId"::text = c.id::text)::int AS votes,
+          (SELECT json_build_object('at', a."createdAt", 'reason', a.detail->>'reason') FROM audit_logs a
+             WHERE a."chamberId"::text = c.id::text AND a.action = 'chamber:suspended'
+             ORDER BY a.seq DESC LIMIT 1) AS "lastSuspension"
         FROM chambers c
         ORDER BY c."createdAt" DESC`),
       this.db.query(`

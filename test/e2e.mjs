@@ -538,6 +538,29 @@ psql(`INSERT INTO audit_logs (id, "chamberId", action, detail, hash, "previousHa
 const avF = (await call('GET', `/audit/chamber/${chB}/verify`, { token: pB.accessToken })).data;
 ok(avF.valid === false && /selo/.test(avF.reason), 'registro forjado com hash correto, sem selo, é detectado', JSON.stringify(avF));
 
+console.log('\n[câmara suspensa]');
+const setSt = (token, body) => call('PATCH', `/chambers/${chB}/status`, { token, body });
+ok((await setSt(pB.accessToken, { active: false })).status === 403, 'presidente não suspende a própria câmara');
+await call('PATCH', `/chambers/${chB}`, { token: sa.accessToken, body: { isActive: false } });
+ok((await call('GET', `/chambers/${chB}`)).data?.isActive === true, 'edição comum não suspende (só a rota de status)');
+const sus = await setSt(sa.accessToken, { active: false, reason: 'Falta de pagamento' });
+ok(sus.status === 200 && sus.data?.isActive === false, 'superadmin suspende a câmara', sus.status);
+const loginSus = await call('POST', '/auth/login', { body: { identifier: 'pb@t.com', password: 'senhaBeta123', trustToken: mfa['pb@t.com']?.trust } });
+ok(loginSus.status === 403 && /suspens/i.test(JSON.stringify(loginSus.data)), 'login bloqueado com câmara suspensa', loginSus.status);
+const meSus = await call('GET', '/users/me', { token: pB.accessToken });
+ok(meSus.status === 401 && /suspens/i.test(JSON.stringify(meSus.data)), 'acesso já aberto cai na hora, com o motivo', meSus.status);
+if (pB.refreshToken) {
+  const rf = await call('POST', '/auth/refresh', { body: { refreshToken: pB.refreshToken } });
+  ok(rf.status === 401, 'login salvo no navegador não renova mais', rf.status);
+}
+ok((await call('GET', `/public/chambers/${chB}`)).status === 404, 'portal público da câmara suspensa fica fora do ar');
+ok((await call('GET', '/users/me', { token: pA.accessToken })).status === 200, 'outra câmara segue funcionando');
+const ovS = (await call('GET', '/chambers/admin/overview', { token: sa.accessToken })).data?.chambers?.find(c => c.id === chB);
+ok(ovS?.isActive === false && ovS?.lastSuspension?.reason === 'Falta de pagamento', 'visão geral mostra a suspensão e o motivo');
+ok((await setSt(sa.accessToken, { active: true })).status === 200, 'superadmin reativa a câmara');
+const loginBack = await call('POST', '/auth/login', { body: { identifier: 'pb@t.com', password: 'senhaBeta123', trustToken: mfa['pb@t.com']?.trust } });
+ok(loginBack.status === 200 || loginBack.status === 201, 'reativada: login volta a funcionar', loginBack.status);
+
 console.log('\n[headers]');
 const h = await fetch(B + '/health');
 ok(h.headers.get('x-frame-options') === 'DENY' && h.headers.get('x-content-type-options') === 'nosniff' && !h.headers.get('x-powered-by'), 'headers de segurança na API');

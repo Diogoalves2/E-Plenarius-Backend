@@ -66,6 +66,7 @@ export class AuthService {
     this.attempts.clear(`pwd:${user.id}`);
 
     if (!user.isActive) throw new ForbiddenException('Conta desativada');
+    await this.assertChamberActive(user);
 
     // Vereador só entra se houver sessão em andamento.
     // Presidente, secretaria e superadmin sempre.
@@ -132,6 +133,7 @@ export class AuthService {
     const user = await this.usersService.findByIdWithPin(dto.userId);
     if (!user) throw new UnauthorizedException('Usuário não encontrado');
     if (!user.isActive) throw new ForbiddenException('Conta desativada');
+    await this.assertChamberActive(user);
     if (!['vereador', 'presidente', 'vice_presidente'].includes(user.role)) {
       throw new ForbiddenException('Acesso ao app restrito a vereadores e presidente');
     }
@@ -199,6 +201,8 @@ export class AuthService {
       relations: ['user'],
     });
     if (!stored) throw new UnauthorizedException('Refresh token inválido ou expirado');
+    // Câmara suspensa: responde com o motivo (não é reuso de token, não dispara alarme de roubo)
+    if (stored.user) await this.assertChamberActive(stored.user);
 
     // Token já usado sendo reapresentado = provável roubo: revoga tudo do usuário.
     if (stored.revoked) {
@@ -247,7 +251,16 @@ export class AuthService {
     return Number(m[1]) * unit;
   }
 
+  private async assertChamberActive(user: { role: string; chamberId?: string | null }) {
+    if (user.role === 'superadmin') return;
+    if (!(await this.usersService.isChamberActive(user.chamberId))) {
+      throw new ForbiddenException(UsersService.CHAMBER_SUSPENDED);
+    }
+  }
+
   private async generateTokens(user: any, mobile?: { mobileDevice?: string; deviceId?: string }) {
+    // Toda emissão de token (login, 2FA, tablet, renovação) passa aqui
+    await this.assertChamberActive(user);
     const payload: JwtPayload = {
       sub: user.id,
       email: user.email,

@@ -12,6 +12,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ChamberAccessService } from '../common/access/chamber-access.service';
 import { AuditService } from '../audit/audit.service';
 import { ChamberSettingsDto } from './dto/chamber-settings.dto';
+import { ChamberStatusDto } from './dto/chamber-status.dto';
 
 @ApiTags('chambers')
 @Controller('chambers')
@@ -118,7 +119,23 @@ export class ChambersController {
   @Roles('superadmin')
   @ApiOperation({ summary: 'Editar câmara (superadmin)' })
   update(@Param('id') id: string, @Body() body: any) {
-    return this.chambersService.update(id, body);
+    // Suspender/reativar só pela rota de status (revoga acessos e fica na auditoria)
+    const { isActive: _ignored, ...rest } = body ?? {};
+    return this.chambersService.update(id, rest);
+  }
+
+  @Patch(':id/status')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('superadmin')
+  @ApiOperation({ summary: 'Suspender ou reativar a câmara (superadmin)' })
+  async setStatus(@Param('id', ParseUUIDPipe) id: string, @Body() dto: ChamberStatusDto, @CurrentUser() user: any) {
+    const saved = await this.chambersService.setStatus(id, dto.active);
+    await this.audit.log({
+      chamberId: id, userId: user.id, action: dto.active ? 'chamber:reactivated' : 'chamber:suspended',
+      detail: dto.reason ? { reason: dto.reason } : {},
+    });
+    return saved;
   }
 
   @Patch(':id/reset-credentials')

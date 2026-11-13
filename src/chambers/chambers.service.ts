@@ -97,6 +97,31 @@ export class ChambersService {
     return chamber;
   }
 
+  /**
+   * Suspende (ex.: falta de pagamento) ou reativa a câmara. Suspensa: ninguém dela entra,
+   * os logins abertos caem (tokens revogados) e o portal público some. Dados ficam intactos.
+   */
+  async setStatus(id: string, active: boolean): Promise<Chamber> {
+    const chamber = await this.findOne(id);
+    if (!active) {
+      const running = await this.sessionsRepo.count({ where: { chamberId: id, status: 'em_andamento' } as any });
+      if (running) {
+        throw new BadRequestException('Há uma sessão em andamento nesta Câmara. Encerre a sessão antes de suspender.');
+      }
+    }
+    chamber.isActive = active;
+    const saved = await this.chambersRepo.save(chamber);
+    if (!active) {
+      // Apaga (não só revoga): um token revogado reapresentado depois da reativação
+      // dispararia o alarme de roubo e derrubaria o novo login do usuário.
+      await this.chambersRepo.query(
+        `DELETE FROM refresh_tokens WHERE "userId" IN (SELECT id FROM users WHERE "chamberId"::text = $1)`,
+        [id],
+      );
+    }
+    return saved;
+  }
+
   async update(id: string, dto: Partial<{ name: string; city: string; state: string; logoUrl: string; isActive: boolean }>): Promise<Chamber> {
     const chamber = await this.findOne(id);
     Object.assign(chamber, dto);

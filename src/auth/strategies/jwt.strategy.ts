@@ -36,6 +36,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     // Conta desativada perde o acesso na hora (sem esperar o token expirar).
     const user = await this.usersService.findRawById(payload.sub);
     if (!user || !user.isActive) throw new UnauthorizedException('Conta desativada');
+    if (user.role !== 'superadmin' && !(await this.usersService.isChamberActive(user.chamberId))) {
+      throw new UnauthorizedException(UsersService.CHAMBER_SUSPENDED);
+    }
 
     // Token do app mobile: valida que o device atual ainda é este.
     // Se o usuário fez login em outro tablet, o mobileDeviceId no banco mudou
