@@ -489,6 +489,9 @@ await upload('/upload/logo', sa.accessToken, 'logo.png', 'image/png', PNG_1PX);
 ok((await call('GET', '/upload/system-logo')).data.url === logoBefore, 'logo de câmara não troca a logo do sistema');
 const sysLogo = await (await upload('/upload/logo?target=system', sa.accessToken, 'logo.png', 'image/png', PNG_1PX)).json();
 ok((await call('GET', '/upload/system-logo')).data.url === sysLogo.url, 'logo do sistema trocada só pelas configurações do sistema');
+ok((await call('DELETE', '/upload/system-logo', { token: pA.accessToken })).status === 403, 'presidente não remove a logo do sistema');
+ok((await call('DELETE', '/upload/system-logo', { token: sa.accessToken })).status === 200 && (await call('GET', '/upload/system-logo')).data.url === null,
+  'superadmin remove a logo do sistema (volta ao padrão)');
 ok((await upload('/upload/logo', sa.accessToken, 'l.svg', 'image/svg+xml', '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"></svg>')).status === 400,
   'SVG com evento/script recusado');
 ok((await call('POST', '/users', { token: pA.accessToken, body: { chamberId: chA, name: 'Curta', email: 'curta@t.com', password: '1234567', role: 'vereador' } })).status === 400,

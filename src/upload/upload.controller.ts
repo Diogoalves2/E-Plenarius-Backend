@@ -2,6 +2,7 @@ import {
   Controller,
   Post,
   Get,
+  Delete,
   UseGuards,
   UseInterceptors,
   UploadedFile,
@@ -13,7 +14,7 @@ import { ApiTags, ApiOperation, ApiBearerAuth, ApiConsumes, ApiBody } from '@nes
 import { diskStorage } from 'multer';
 import { basename, join } from 'path';
 import { randomBytes } from 'crypto';
-import { existsSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
 import { open, unlink } from 'fs/promises';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -143,6 +144,16 @@ export class UploadController {
     if (!existsSync(SYSTEM_LOGO_FILE)) return { url: null };
     const url = readFileSync(SYSTEM_LOGO_FILE, 'utf8').trim();
     return { url: /^\/uploads\/[\w.-]+$/.test(url) ? url : null };
+  }
+
+  @Delete('system-logo')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('superadmin')
+  @ApiOperation({ summary: 'Remove o logo do sistema (volta ao padrão) — superadmin' })
+  removeSystemLogo() {
+    if (existsSync(SYSTEM_LOGO_FILE)) unlinkSync(SYSTEM_LOGO_FILE);
+    return { url: null };
   }
 
   @Post('pdf')
