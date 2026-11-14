@@ -77,6 +77,8 @@ const st0 = (await call('GET', '/auth/mfa/status', { token: pA.accessToken })).d
 ok(st0.required && st0.enabled && st0.recoveryCodesLeft === 9, 'status da 2FA', JSON.stringify(st0));
 ok((await call('POST', '/auth/login', { body: { identifier: 'pa@t.com', password: 'senhaAlfa123', trustToken: mfa['pb@t.com'].trust } })).data.mfaRequired,
   '"confiar neste computador" de outro usuário não vale');
+const sT = (await call('POST', '/auth/login', { body: { identifier: 'pa@t.com', password: 'senhaAlfa123', trustToken: mfa['pa@t.com'].trust } })).data;
+ok(!!sT.accessToken && !sT.mfaToken, 'o próprio "confiar neste computador" dispensa o código por 30 dias');
 const sB = (await call('POST', '/auth/login', { body: { identifier: 'pb@t.com', password: 'senhaBeta123' } })).data;
 const lockSt = [];
 for (let i = 0; i < 6; i++) lockSt.push((await call('POST', '/auth/mfa/verify', { body: { mfaToken: sB.mfaToken, code: '000000' } })).status);
