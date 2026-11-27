@@ -1,0 +1,17 @@
+{
+  "geradoEm": "2026-11-27T12:00:21.808Z",
+  "camaras": [
+    {
+      "chamberId": "7c43571d-ab48-4980-adde-730873d8a9be",
+      "seq": 58,
+      "hash": "5aceff4bec21849dd4c7ace237500513168170382dd6646a7a4817ead8cb3e3d",
+      "em": "2026-11-27T11:13:52.631Z"
+    },
+    {
+      "chamberId": "b9b4990d-aeb6-4888-88de-e543a5c9320f",
+      "seq": 8,
+      "hash": "af23ada8d95a88139bba516dcdfe0f1f392610144179fd746b13eba186cf6d46",
+      "em": "2026-11-13T22:46:14.992Z"
+    }
+  ]
+}
